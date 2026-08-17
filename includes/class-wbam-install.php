@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) exit;
 
 class WBAM_Install {
 
-    const DB_VER = '3';
+    const DB_VER = '4';
 
     public static function activate(): void {
         self::tables();
@@ -15,7 +15,35 @@ class WBAM_Install {
     public static function maybe_upgrade(): void {
         if (get_option('wbam_db_ver') !== self::DB_VER) {
             self::tables();
+            self::upgrade_barcodes();
             update_option('wbam_db_ver', self::DB_VER);
+        }
+    }
+
+    /**
+     * v4: swap SKU-string pool barcodes for scanner-friendly in-store EAN-13s.
+     * Writes the new number to the Shopify variant and to every unit of that
+     * variant. Capped + fault-tolerant; anything missed self-heals on the next
+     * intake of that variant (ensure_pool_barcode upgrades on sight).
+     */
+    private static function upgrade_barcodes(): void {
+        global $wpdb;
+        $variants = $wpdb->get_results(
+            "SELECT product_id, variant_id, MIN(pool_barcode) pool_barcode
+             FROM {$wpdb->prefix}wbam_units
+             WHERE status='in_stock' AND variant_id>0
+             GROUP BY product_id, variant_id LIMIT 25", ARRAY_A) ?: [];
+        foreach ($variants as $v) {
+            if (WBAM_Catalog::is_store_ean((string) $v['pool_barcode'])) continue;
+            try {
+                $ean = WBAM_Catalog::ensure_pool_barcode((int) $v['product_id'], [
+                    'variant_id' => (int) $v['variant_id'],
+                    'barcode'    => '',
+                    'sku'        => '',
+                ]);
+                $wpdb->update("{$wpdb->prefix}wbam_units",
+                    ['pool_barcode' => $ean], ['variant_id' => (int) $v['variant_id']]);
+            } catch (Throwable $e) {} // next intake of this variant fixes it
         }
     }
 

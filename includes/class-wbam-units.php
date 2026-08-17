@@ -132,14 +132,15 @@ class WBAM_Units {
         $id   = (int) $wpdb->insert_id;
         $code = 'U' . str_pad((string) $id, 5, '0', STR_PAD_LEFT);
 
-        $prod = WBAM_Catalog::create_custom_product($title, $grade, $sell, $paid, $code, (int) $branch['shopify_location_id']);
+        $ean  = WBAM_Catalog::next_ean();
+        $prod = WBAM_Catalog::create_custom_product($title, $grade, $sell, $paid, $code, $ean, (int) $branch['shopify_location_id']);
         $wpdb->update("{$wpdb->prefix}wbam_units", [
             'unit_code'         => $code,
             'product_id'        => $prod['product_id'],
             'variant_id'        => $prod['variant_id'],
             'inventory_item_id' => $prod['inventory_item_id'],
             'sku'               => $code,
-            'pool_barcode'      => $code,
+            'pool_barcode'      => $ean,
         ], ['id' => $id]);
         self::event($id, 'intake_custom', sprintf('%s (%s) @ %s, paid £%.2f, asking £%.2f', $title, $grade, $branch['name'], $paid, $sell));
 

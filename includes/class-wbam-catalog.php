@@ -44,10 +44,10 @@ class WBAM_Catalog {
 
     /**
      * Custom device intake — a one-off product created on the fly (device not in
-     * the catalog). Single variant, Condition option = grade, barcode/sku = unit
-     * code, cost + qty 1 set in one call, published to the POS channel.
+     * the catalog). Single variant, Condition option = grade, sku = unit code,
+     * barcode = in-store EAN-13, cost + qty 1 set in one call, published to POS.
      */
-    public static function create_custom_product(string $title, string $grade, float $sell, float $cost, string $barcode, int $location_id): array {
+    public static function create_custom_product(string $title, string $grade, float $sell, float $cost, string $sku, string $barcode, int $location_id): array {
         $m = 'mutation($input: ProductSetInput!) {
             productSet(input: $input, synchronous: true)%IDEM% {
                 product { id variants(first: 1) { nodes { id inventoryItem { id } } } }
@@ -64,7 +64,7 @@ class WBAM_Catalog {
             'variants'       => [[
                 'optionValues'        => [['optionName' => 'Condition', 'name' => $grade]],
                 'price'               => number_format($sell, 2, '.', ''),
-                'sku'                 => $barcode,
+                'sku'                 => $sku,
                 'barcode'             => $barcode,
                 'taxable'             => true,
                 'inventoryItem'       => ['tracked' => true, 'cost' => number_format($cost, 2, '.', '')],
@@ -214,13 +214,35 @@ class WBAM_Catalog {
         ];
     }
 
+    /** EAN-13 check digit for a 12-digit payload. */
+    public static function ean13_check(string $d12): string {
+        $sum = 0;
+        for ($i = 0; $i < 12; $i++) $sum += ((int) $d12[$i]) * ($i % 2 ? 3 : 1);
+        return (string) ((10 - $sum % 10) % 10);
+    }
+
+    /** Next in-store EAN-13 (GS1 prefix "2" = internal/in-store numbers). */
+    public static function next_ean(): string {
+        $seq = (int) get_option('wbam_pool_seq', 0) + 1;
+        update_option('wbam_pool_seq', $seq, false);
+        $payload = '2' . str_pad((string) $seq, 11, '0', STR_PAD_LEFT);
+        return $payload . self::ean13_check($payload);
+    }
+
+    /** Is this one of our in-store EAN-13 codes? */
+    public static function is_store_ean(string $code): bool {
+        return strlen($code) === 13 && ctype_digit($code) && $code[0] === '2'
+            && self::ean13_check(substr($code, 0, 12)) === $code[12];
+    }
+
     /**
-     * Make sure the variant has a barcode value (what the shelf label encodes and
-     * what POS scanning matches). Uses the SKU when present, else WBAM-V{variant_id}.
+     * Every pooled variant carries a scanner-friendly in-store EAN-13 as its
+     * Shopify barcode — what the shelf label encodes and what a POS scan
+     * matches. Older SKU-string barcodes are upgraded on sight.
      */
     public static function ensure_pool_barcode(int $product_id, array $variant): string {
-        if ($variant['barcode'] !== '') return $variant['barcode'];
-        $code = $variant['sku'] !== '' ? $variant['sku'] : ('WBAM-V' . $variant['variant_id']);
+        if (self::is_store_ean((string) $variant['barcode'])) return (string) $variant['barcode'];
+        $code = self::next_ean();
         $m = 'mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
             productVariantsBulkUpdate(productId: $productId, variants: $variants) {
                 userErrors { field message }

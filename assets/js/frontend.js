@@ -118,9 +118,9 @@
         <label>Notes<input id="in-notes"></label>
       </div>
       <div id="in-bank" style="display:none"><h3>Bank transfer details</h3><div class="wa-grid">
-        <label>Account name *<input id="bk-name"></label>
-        <label>Sort code *<input id="bk-sort" placeholder="00-00-00" inputmode="numeric"></label>
-        <label>Account number *<input id="bk-acct" inputmode="numeric"></label>
+        <label>Account name<input id="bk-name"></label>
+        <label>Sort code<input id="bk-sort" placeholder="00-00-00" inputmode="numeric"></label>
+        <label>Account number<input id="bk-acct" inputmode="numeric"></label>
         <label>Payment reference<input id="bk-ref"></label>
       </div></div>
       <div id="in-seller"></div>
@@ -135,7 +135,11 @@
       <div id="in-done"></div></div>`;
 
     const sellerBox = q('#in-seller');
-    const syncSeller = () => { sellerBox.innerHTML = sellerFields(q('#in-source').value !== 'supplier'); };
+    const syncSeller = () => {
+      sellerBox.innerHTML = q('#in-source').value === 'supplier'
+        ? '<h3>Supplier</h3><div class="wa-grid"><label>Supplier name (optional)<input id="su-name"></label></div>'
+        : sellerFields(true);
+    };
     syncSeller();
     q('#in-source').onchange = () => {
       if (q('#in-source').value === 'tradein') q('#in-payout').value = 'store_credit';
@@ -177,7 +181,7 @@
     };
     q('#in-save').onclick = async () => {
       const msg = q('#in-msg'); msg.textContent = '';
-      const val = (id) => q(id).value.trim();
+      const val = (id) => { const el = q(id); return el ? el.value.trim() : ''; };
       const seller = { name: val('#se-name'), mobile: val('#se-mobile'), dob: val('#se-dob'), email: val('#se-email'),
         address1: val('#se-a1'), address2: val('#se-a2'), postcode: val('#se-pc'), time_at_address: val('#se-taa'),
         id_type: val('#se-idt'), id_ref: val('#se-idr'),
@@ -187,9 +191,10 @@
         notes: val('#in-notes'), seller };
       if (val('#in-payout') === 'bank') {
         body.bank = { account_name: val('#bk-name'), sort_code: val('#bk-sort'), account_number: val('#bk-acct'), reference: val('#bk-ref') };
-        if (!body.bank.account_name || !body.bank.sort_code || !body.bank.account_number) { msg.textContent = '⚠ Bank details incomplete.'; return; }
       }
-      if (body.source !== 'supplier' && (!seller.name || !seller.mobile)) { msg.textContent = '⚠ Seller name and mobile are required.'; return; }
+      if (body.source === 'supplier') {
+        if (val('#su-name')) body.source_ref = val('#su-name');
+      } else if (!seller.name || !seller.mobile) { msg.textContent = '⚠ Seller name and mobile are required.'; return; }
       if (I.custom) {
         Object.assign(body, { custom: 1, title: val('#cu-title'), grade: val('#cu-grade'), sell_price: parseFloat(val('#cu-sell') || '0') });
         if (!body.title || !(body.sell_price > 0)) { msg.textContent = '⚠ Custom device needs a name and selling price.'; return; }

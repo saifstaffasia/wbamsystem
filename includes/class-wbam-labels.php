@@ -80,8 +80,12 @@ class WBAM_Labels {
     </div>
   </div>
 <script>
-  JsBarcode('#bc', <?php echo wp_json_encode($barcode); ?>, {
-    format: 'CODE128', displayValue: false, margin: 0, height: 34
+  var CODE = <?php echo wp_json_encode($barcode); ?>;
+  // In-store codes are EAN-13 (every retail scanner reads these); anything
+  // older falls back to Code 128. margin = the quiet zone scanners need.
+  JsBarcode('#bc', CODE, {
+    format: /^\d{13}$/.test(CODE) ? 'EAN13' : 'CODE128',
+    flat: true, displayValue: false, margin: 10, height: 34
   });
   window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 150); });
 </script>

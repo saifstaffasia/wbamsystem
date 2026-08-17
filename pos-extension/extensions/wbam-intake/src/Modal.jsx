@@ -37,6 +37,9 @@ function Extension() {
   const [bkSort, setBkSort] = useState('');
   const [bkAcct, setBkAcct] = useState('');
 
+  // supplier stock
+  const [supplier, setSupplier] = useState('');
+
   // seller
   const [sName, setSName] = useState('');
   const [sMobile, setSMobile] = useState('');
@@ -84,7 +87,6 @@ function Extension() {
     }
     if (price === '' || !(parseFloat(price) >= 0)) { setMsg('Enter the price paid.'); return; }
     if (source !== 'supplier' && (!sName.trim() || !sMobile.trim())) { setMsg('Seller name and mobile are required.'); return; }
-    if (payout === 'bank' && (!bkName.trim() || !bkSort.trim() || !bkAcct.trim())) { setMsg('Bank details incomplete (account name, sort code, account number).'); return; }
     setBusy(true);
     setMsg('');
     try {
@@ -101,6 +103,7 @@ function Extension() {
         },
       };
       if (payout === 'bank') body.bank = { account_name: bkName, sort_code: bkSort, account_number: bkAcct };
+      if (source === 'supplier' && supplier.trim()) body.source_ref = supplier.trim();
       if (custom) Object.assign(body, { custom: 1, title: cTitle.trim(), grade: cGrade, sell_price: parseFloat(cSell) });
       else Object.assign(body, { product_id: product.product_id, model_title: product.title, selected: sel });
 
@@ -120,7 +123,7 @@ function Extension() {
       setImei(''); setSearch(''); setModels([]); setProduct(null); setSel({});
       setCustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
       setPrice(''); setSource('buyback'); setPayout('cash'); setBattery('');
-      setBkName(''); setBkSort(''); setBkAcct('');
+      setBkName(''); setBkSort(''); setBkAcct(''); setSupplier('');
       setSName(''); setSMobile(''); setSDob(''); setSAddr(''); setSPostcode(''); setSEmail(''); setSIdType(''); setSIdRef('');
     } catch (e) {
       setMsg(String((e && e.message) || e));
@@ -205,6 +208,10 @@ function Extension() {
                   <s-box padding="small"><s-text-field label="Sort code (00-00-00)" value={bkSort} onChange={grab(setBkSort)} onInput={grab(setBkSort)} /></s-box>
                   <s-box padding="small"><s-text-field label="Account number" value={bkAcct} onChange={grab(setBkAcct)} onInput={grab(setBkAcct)} /></s-box>
                 </s-box>
+              ) : null}
+
+              {source === 'supplier' ? (
+                <s-box padding="small"><s-text-field label="Supplier name (optional)" value={supplier} onChange={grab(setSupplier)} onInput={grab(setSupplier)} /></s-box>
               ) : null}
 
               {source !== 'supplier' ? (
