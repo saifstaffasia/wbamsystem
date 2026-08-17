@@ -1,0 +1,43 @@
+/* WBAM Hub — shared styles (admin + front-end report page). */
+.wbam-wrap { max-width: 1100px; margin: 0 auto; padding: 12px; font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+.wbam-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.wbam-tabs a { padding: 8px 14px; border-radius: 20px; text-decoration: none; background: #eef1f4; color: #1f2937; font-weight: 600; }
+.wbam-tabs a.on { background: #111827; color: #fff; }
+.wbam-refresh { padding: 8px 14px; border-radius: 8px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; font-weight: 600; }
+
+.wbam-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin: 10px 0 18px; }
+.wbam-tiles .tile { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; }
+.wbam-tiles .tile span { display: block; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; }
+.wbam-tiles .tile b { display: block; font-size: 22px; margin: 2px 0; }
+.wbam-tiles .tile small { color: #6b7280; }
+
+.wbam-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+@media (max-width: 900px) { .wbam-cols { grid-template-columns: 1fr; } }
+
+.wbam-t { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+.wbam-t td, .wbam-t th { padding: 8px 12px; border-bottom: 1px solid #f1f3f5; text-align: left; font-size: 14px; }
+.wbam-t .r { text-align: right; font-variant-numeric: tabular-nums; }
+.wbam-foot { color: #6b7280; font-size: 12px; margin-top: 14px; }
+
+/* Admin bits */
+.wbam-admin .wbam-card { background: #fff; border: 1px solid #dcdcde; border-radius: 8px; padding: 14px 16px; margin: 10px 0; }
+.wbam-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 14px; }
+.wbam-grid label { display: flex; flex-direction: column; font-weight: 600; gap: 3px; }
+.wbam-grid input, .wbam-grid select { min-height: 34px; }
+.wbam-filters { display: flex; gap: 8px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
+.wbam-inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.wbam-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.wbam-opt { text-align: left; padding: 8px 10px; border: 1px solid #d1d5db; background: #f9fafb; border-radius: 6px; cursor: pointer; }
+.wbam-opt:hover { background: #eef2ff; }
+.wbam-status { margin-left: 10px; font-weight: 600; }
+.wbam-actions form select { max-width: 110px; }
+.wbam-log { margin: 0; } .wbam-log li { margin-bottom: 4px; }
+
+.wbam-st { padding: 2px 8px; border-radius: 10px; background: #eef1f4; font-size: 12px; font-weight: 700; }
+.st-ready { background: #d1fae5; } .st-awaiting_parts { background: #fef3c7; }
+.st-in_repair { background: #dbeafe; } .st-cancelled { background: #fee2e2; }
+
+/* Repair tracking (public) */
+.wbam-track { max-width: 420px; margin: 0 auto; }
+.wbam-track input { width: 100%; padding: 10px; }
+.wbam-track button { padding: 10px 18px; }

@@ -1,0 +1,15 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "WBAM Repairs"
+handle = "wbam-repairs"
+description = "Book repairs and take deposits/balances from the POS smart grid — no typing."
+
+  [[extensions.targeting]]
+  target = "pos.home.tile.render"
+  module = "./src/Tile.jsx"
+
+  [[extensions.targeting]]
+  target = "pos.home.modal.render"
+  module = "./src/Modal.jsx"

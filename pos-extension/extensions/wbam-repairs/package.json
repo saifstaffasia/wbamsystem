@@ -1,0 +1,8 @@
+{
+  "name": "wbam-repairs",
+  "private": true,
+  "dependencies": {
+    "preact": "^10.19.0",
+    "@shopify/ui-extensions": "latest"
+  }
+}

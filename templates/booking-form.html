@@ -1,0 +1,43 @@
+<!-- WBAM Hub — repair booking form for the Shopify storefront repair page.
+     Paste into a Custom Liquid section on /pages/repair.
+     Replace HUB with your hub origin if it ever changes. -->
+<div id="wbam-book" style="max-width:520px;margin:0 auto;">
+  <h3>Book a repair</h3>
+  <form id="wbam-book-form">
+    <p><label>Your name<br><input name="customer_name" required style="width:100%"></label></p>
+    <p><label>Phone<br><input name="phone" required style="width:100%" inputmode="tel"></label></p>
+    <p><label>Email (optional)<br><input name="email" type="email" style="width:100%"></label></p>
+    <p><label>Device<br><input name="device_model" placeholder="e.g. iPhone 12" required style="width:100%"></label></p>
+    <p><label>What's wrong?<br><textarea name="fault" rows="4" required style="width:100%"></textarea></label></p>
+    <input name="website" style="display:none" tabindex="-1" autocomplete="off"><!-- honeypot -->
+    <p><button type="submit" style="padding:12px 24px;">Book repair</button></p>
+    <p id="wbam-book-msg"></p>
+  </form>
+</div>
+<script>
+(function () {
+  var HUB = 'https://wbamsystem.wpenginepowered.com'; // temp host — swap for https://system.webuyanymobile.com when the domain connects
+  var f = document.getElementById('wbam-book-form');
+  var msg = document.getElementById('wbam-book-msg');
+  f.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var data = {};
+    new FormData(f).forEach(function (v, k) { data[k] = v; });
+    msg.textContent = 'Booking…';
+    fetch(HUB + '/wp-json/wbam/v1/booking', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok) {
+        f.style.display = 'none';
+        msg.innerHTML = '<strong>Booked!</strong> Your ticket is <strong>' + j.ticket +
+          '</strong>. We\'ve sent a confirmation — you can track progress at ' +
+          '<a href="' + HUB + '/track/?t=' + j.ticket + '">' + HUB.replace('https://','') + '/track</a>.';
+      } else {
+        msg.textContent = (j && j.message) ? j.message : 'Something went wrong — please call us.';
+      }
+    }).catch(function () { msg.textContent = 'Something went wrong — please call us.'; });
+  });
+})();
+</script>

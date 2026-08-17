@@ -1,0 +1,12 @@
+{
+  "name": "wbam-hub-pos",
+  "private": true,
+  "scripts": {
+    "dev": "shopify app dev",
+    "deploy": "shopify app deploy"
+  },
+  "workspaces": [
+    "extensions/*"
+  ],
+  "trustedDependencies": []
+}
