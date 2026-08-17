@@ -113,9 +113,9 @@ function Extension() {
             [`Trade-in ${res.unit_code}`]: `${res.title} — IMEI ${res.imei || imei} — allowance £${allowance}`,
           });
         } catch (e) {}
-        shopify.toast.show(`${res.unit_code} saved. At payment: tap "Trade In", enter £${allowance}, Accept — the rest by card/cash.`);
+        shopify.toast.show(`${res.unit_code} saved — take £${allowance} on the Trade In payment method`);
       } else {
-        shopify.toast.show(`${res.unit_code} in stock — label & declaration print from the Hub`);
+        shopify.toast.show(`${res.unit_code} added to stock`);
       }
       setImei(''); setSearch(''); setModels([]); setProduct(null); setSel({});
       setCustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
@@ -132,13 +132,13 @@ function Extension() {
     <s-page heading="Trade In Device Intake">
       <s-scroll-box>
         <s-box padding="small">
-          {msg ? <s-box padding="small"><s-text>⚠ {msg}</s-text></s-box> : null}
+          {msg ? <s-box padding="small"><s-text>{msg}</s-text></s-box> : null}
 
-          <s-box padding="small"><s-text-field label="IMEI / serial (scan — dial *#06#)" value={imei} onChange={grab(setImei)} onInput={grab(setImei)} /></s-box>
+          <s-box padding="small"><s-text-field label="IMEI / serial" value={imei} onChange={grab(setImei)} onInput={grab(setImei)} /></s-box>
 
           {!custom ? (
             <s-box>
-              <s-box padding="small"><s-text-field label="Model search — results appear as you type" value={search} onChange={onSearchInput} onInput={onSearchInput} /></s-box>
+              <s-box padding="small"><s-text-field label="Search model" value={search} onChange={onSearchInput} onInput={onSearchInput} /></s-box>
               <s-box>
                 {models.map((m) => (
                   <s-box padding="small" key={m.product_id}>
@@ -153,13 +153,13 @@ function Extension() {
 
           <s-box padding="small">
             <s-button onClick={() => { setCustom(!custom); setProduct(null); setSel({}); setMsg(''); }}>
-              {custom ? '← Back to catalog search' : '➕ Not in the list? Custom device'}
+              {custom ? '← Back to search' : 'Custom device'}
             </s-button>
           </s-box>
 
           {custom ? (
             <s-box>
-              <s-box padding="small"><s-text-field label="Device name (e.g. Google Pixel 8 128GB Black)" value={cTitle} onChange={grab(setCTitle)} onInput={grab(setCTitle)} /></s-box>
+              <s-box padding="small"><s-text-field label="Device name" value={cTitle} onChange={grab(setCTitle)} onInput={grab(setCTitle)} /></s-box>
               <s-box padding="small"><s-text>Grade{cGrade ? `: ${cGrade}` : ''}</s-text></s-box>
               <s-box padding="small"><s-button onClick={() => setCGrade('New')}>{`${cGrade === 'New' ? '✓ ' : ''}New`}</s-button></s-box>
               <s-box padding="small"><s-button onClick={() => setCGrade('Used (A - Excellent)')}>{`${cGrade === 'Used (A - Excellent)' ? '✓ ' : ''}Used (A - Excellent)`}</s-button></s-box>
@@ -209,7 +209,7 @@ function Extension() {
 
               {source !== 'supplier' ? (
                 <s-box>
-                  <s-box padding="small"><s-text>Seller details (for the declaration)</s-text></s-box>
+                  <s-box padding="small"><s-text>Seller details</s-text></s-box>
                   <s-box padding="small"><s-text-field label="Full legal name" value={sName} onChange={grab(setSName)} onInput={grab(setSName)} /></s-box>
                   <s-box padding="small"><s-text-field label="Mobile" value={sMobile} onChange={grab(setSMobile)} onInput={grab(setSMobile)} /></s-box>
                   <s-box padding="small"><s-text-field label="Date of birth (YYYY-MM-DD)" value={sDob} onChange={grab(setSDob)} onInput={grab(setSDob)} /></s-box>

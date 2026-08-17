@@ -139,20 +139,17 @@ function Extension() {
         <s-box padding="small">
           {msg ? (
             <s-box padding="small">
-              <s-text>⚠ {msg}</s-text>
+              <s-text>{msg}</s-text>
             </s-box>
           ) : null}
 
           {view === 'home' && (
             <s-box>
               <s-box padding="small">
-                <s-button onClick={() => { setMsg(''); setView('book'); }}>➕ New repair booking</s-button>
+                <s-button onClick={() => { setMsg(''); setView('book'); }}>New repair booking</s-button>
               </s-box>
               <s-box padding="small">
-                <s-button onClick={() => { setMsg(''); setView('pay'); }}>💳 Take deposit / balance</s-button>
-              </s-box>
-              <s-box padding="small">
-                <s-text>Bookings confirm to the customer automatically. Payments are added to the current cart — check out as normal. Device buy-ins live on the "Trade In Device Intake" tile.</s-text>
+                <s-button onClick={() => { setMsg(''); setView('pay'); }}>Take deposit / balance</s-button>
               </s-box>
             </s-box>
           )}
@@ -162,10 +159,10 @@ function Extension() {
               <s-box padding="small"><s-text-field label="Customer name" value={name} onChange={grab(setName)} onInput={grab(setName)} /></s-box>
               <s-box padding="small"><s-text-field label="Phone" value={phone} onChange={grab(setPhone)} onInput={grab(setPhone)} /></s-box>
               <s-box padding="small"><s-text-field label="Email (optional)" value={email} onChange={grab(setEmail)} onInput={grab(setEmail)} /></s-box>
-              <s-box padding="small"><s-text-field label="Device (e.g. iPhone 12)" value={device} onChange={grab(setDevice)} onInput={grab(setDevice)} /></s-box>
-              <s-box padding="small"><s-text-field label="IMEI (optional — dial *#06#)" value={imei} onChange={grab(setImei)} onInput={grab(setImei)} /></s-box>
-              <s-box padding="small"><s-text-field label="Passcode (for testing the device)" value={passcode} onChange={grab(setPasscode)} onInput={grab(setPasscode)} /></s-box>
-              <s-box padding="small"><s-text-field label="What's wrong?" value={fault} onChange={grab(setFault)} onInput={grab(setFault)} /></s-box>
+              <s-box padding="small"><s-text-field label="Device" value={device} onChange={grab(setDevice)} onInput={grab(setDevice)} /></s-box>
+              <s-box padding="small"><s-text-field label="IMEI (optional)" value={imei} onChange={grab(setImei)} onInput={grab(setImei)} /></s-box>
+              <s-box padding="small"><s-text-field label="Passcode" value={passcode} onChange={grab(setPasscode)} onInput={grab(setPasscode)} /></s-box>
+              <s-box padding="small"><s-text-field label="Fault" value={fault} onChange={grab(setFault)} onInput={grab(setFault)} /></s-box>
 
               <s-box padding="small"><s-text>Repair type{rtype ? `: ${rtype}` : ''}</s-text></s-box>
               <s-box padding="small"><s-button onClick={pickType('Diagnosis')}>{tlabel('Diagnosis')}</s-button></s-box>
@@ -179,12 +176,12 @@ function Extension() {
                 <s-button onClick={() => setHeld(true)}>{`${held ? '✓ ' : ''}Yes — device is here`}</s-button>
               </s-box>
               <s-box padding="small">
-                <s-button onClick={() => setHeld(false)}>{`${!held ? '✓ ' : ''}No — deposit now, device comes later`}</s-button>
+                <s-button onClick={() => setHeld(false)}>{`${!held ? '✓ ' : ''}No — device comes later`}</s-button>
               </s-box>
 
               <s-box padding="small"><s-text-field label="Estimated completion (YYYY-MM-DD)" value={due} onChange={grab(setDue)} onInput={grab(setDue)} /></s-box>
               <s-box padding="small"><s-text-field label="Quote £ (optional)" value={quote} onChange={grab(setQuote)} onInput={grab(setQuote)} /></s-box>
-              <s-box padding="small"><s-text-field label="Deposit to take now £ (optional)" value={deposit} onChange={grab(setDeposit)} onInput={grab(setDeposit)} /></s-box>
+              <s-box padding="small"><s-text-field label="Deposit £ (optional)" value={deposit} onChange={grab(setDeposit)} onInput={grab(setDeposit)} /></s-box>
               <s-box padding="small"><s-button disabled={busy || undefined} onClick={submitBooking}>{busy ? 'Booking…' : 'Book repair'}</s-button></s-box>
               <s-box padding="small"><s-button onClick={() => setView('home')}>← Back</s-button></s-box>
             </s-box>
@@ -209,8 +206,8 @@ function Extension() {
                     <s-text>{`${picked.ticket} — ${picked.customer} (${picked.status}). Paid so far £${Number(picked.paid).toFixed(2)}.`}</s-text>
                   </s-box>
                   <s-box padding="small"><s-text-field label="Amount £" value={amount} onChange={grab(setAmount)} onInput={grab(setAmount)} /></s-box>
-                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add DEPOSIT to cart</s-button></s-box>
-                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('balance')}>Add BALANCE to cart</s-button></s-box>
+                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add deposit to cart</s-button></s-box>
+                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('balance')}>Add balance to cart</s-button></s-box>
                 </s-box>
               ) : null}
               <s-box padding="small"><s-button onClick={() => setView('home')}>← Back</s-button></s-box>
