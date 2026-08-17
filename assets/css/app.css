@@ -61,6 +61,20 @@ body:has(#wbam-app) main, body:has(#wbam-app) .entry-content, body:has(#wbam-app
 .wa-pick button { border:1px solid #d1d5db; background:#fff; border-radius:999px; padding:9px 15px; font-size:15px; cursor:pointer; }
 .wa-pick button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
 
+.wa-login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px 16px; background:var(--bg); font-family:-apple-system,"Segoe UI",Roboto,Arial,sans-serif; color:var(--ink); }
+.wa-login-card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:28px 26px; width:100%; max-width:400px; box-shadow:0 10px 30px rgba(17,24,39,.08); }
+.wa-login-logo { font-size:24px; font-weight:800; letter-spacing:.02em; }
+.wa-login label { display:flex; flex-direction:column; gap:5px; font-size:14px; font-weight:600; color:#374151; margin:14px 0; }
+.wa-login input[type=text], .wa-login input[type=password] { font-size:16px; padding:12px; border:1px solid #d1d5db; border-radius:10px; width:100%; box-sizing:border-box; }
+.wa-login input:focus { outline:2px solid var(--acc); border-color:var(--acc); }
+.wa-login .wa-remember { flex-direction:row; align-items:center; gap:8px; font-weight:500; }
+.wa-login .wa-btn { width:100%; padding:13px; font-size:16px; border:0; border-radius:10px; font-weight:700; cursor:pointer; }
+.wa-login .wa-btn.p { background:var(--ink); color:#fff; }
+.wa-login .wa-msg { padding:10px 14px; border-radius:10px; margin:10px 0; font-weight:600; }
+.wa-login .wa-msg.ok { background:#d1fae5; color:#065f46; }
+.wa-login .wa-msg.err { background:#fee2e2; color:var(--bad); }
+.wa-login .wa-sub a { color:var(--mut); }
+
 .wa-modal { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:flex-start; justify-content:center; z-index:100; padding:4vh 12px; overflow:auto; }
 .wa-modal .wa-card { width:100%; max-width:680px; }
 .wa-sub { color:var(--mut); font-size:13px; }

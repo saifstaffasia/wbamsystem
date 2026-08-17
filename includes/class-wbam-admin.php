@@ -134,11 +134,28 @@ class WBAM_Admin {
                     case 'return':   WBAM_Units::return_to_stock($id, sanitize_text_field($_POST['reason'] ?? '')); break;
                     case 'writeoff': current_user_can('wbam_manage') && WBAM_Units::write_off($id, sanitize_text_field($_POST['reason'] ?? '')); break;
                     case 'transfer': WBAM_Units::transfer($id, (int) $_POST['to_branch']); break;
+                    case 'delete':
+                        if (!current_user_can('wbam_manage')) throw new RuntimeException('Managers only.');
+                        $code = WBAM_Units::delete_unit($id);
+                        echo '<div class="notice notice-success"><p>' . esc_html($code) . ' deleted.</p></div>';
+                        break;
                 }
-                echo '<div class="notice notice-success"><p>Done.</p></div>';
+                if ($_POST['wbam_unit_action'] !== 'delete') echo '<div class="notice notice-success"><p>Done.</p></div>';
             } catch (Throwable $e) {
                 echo '<div class="notice notice-error"><p>' . esc_html($e->getMessage()) . '</p></div>';
             }
+        }
+        // Bulk delete (managers).
+        if (!empty($_POST['wbam_bulk_delete']) && check_admin_referer('wbam_units_bulk') && current_user_can('wbam_manage')) {
+            $done = [];
+            $errs = [];
+            foreach ((array) ($_POST['unit_ids'] ?? []) as $bid) {
+                try { $done[] = WBAM_Units::delete_unit((int) $bid); }
+                catch (Throwable $e) { $errs[] = 'id ' . (int) $bid . ': ' . $e->getMessage(); }
+            }
+            if ($done) echo '<div class="notice notice-success"><p>Deleted ' . count($done) . ' unit(s): ' . esc_html(implode(', ', $done)) . '.</p></div>';
+            if ($errs) echo '<div class="notice notice-error"><p>' . esc_html(implode(' · ', $errs)) . '</p></div>';
+            if (!$done && !$errs) echo '<div class="notice notice-warning"><p>Nothing selected.</p></div>';
         }
         self::h('Units');
         $q = sanitize_text_field($_GET['q'] ?? '');
@@ -159,10 +176,19 @@ class WBAM_Admin {
         </form>
         <?php
         $units = !empty($_GET['aging']) ? WBAM_Units::aging(45) : WBAM_Units::search(['q' => $q, 'status' => $status, 'branch_id' => $branch]);
-        echo '<table class="widefat striped"><thead><tr><th>Unit</th><th>Device</th><th>IMEI</th><th>Branch</th><th>Status</th><th>Cost</th><th>Sold</th><th>In stock since</th><th></th></tr></thead><tbody>';
+        $can_delete = current_user_can('wbam_manage');
+        if ($can_delete) {
+            echo '<form method="post" id="wbam-bulk-form" style="margin:8px 0">';
+            wp_nonce_field('wbam_units_bulk');
+            echo '<button class="button" name="wbam_bulk_delete" value="1" onclick="return confirm(\'Delete every ticked unit? In-stock ones are removed from Shopify stock too. This cannot be undone.\')">🗑 Delete selected</button>'
+               . ' <label style="margin-left:8px"><input type="checkbox" onclick="document.querySelectorAll(\'.wbam-cb\').forEach(c=>c.checked=this.checked)"> Select all</label></form>';
+        }
+        echo '<table class="widefat striped"><thead><tr>' . ($can_delete ? '<th style="width:28px"></th>' : '') . '<th>Unit</th><th>Device</th><th>IMEI</th><th>Branch</th><th>Status</th><th>Cost</th><th>Sold</th><th>In stock since</th><th></th></tr></thead><tbody>';
         foreach ($units as $u) {
             $b = WBAM_Settings::branch((int) $u['branch_id']);
-            echo '<tr><td><b>' . esc_html($u['unit_code']) . '</b></td>'
+            echo '<tr>'
+               . ($can_delete ? '<td><input class="wbam-cb" type="checkbox" form="wbam-bulk-form" name="unit_ids[]" value="' . (int) $u['id'] . '"></td>' : '')
+               . '<td><b>' . esc_html($u['unit_code']) . '</b></td>'
                . '<td>' . esc_html($u['model_title'] . ' — ' . $u['variant_title']) . '</td>'
                . '<td>…' . esc_html(substr($u['imei'], -8)) . '</td>'
                . '<td>' . esc_html($b['name'] ?? '?') . '</td>'
@@ -182,12 +208,15 @@ class WBAM_Admin {
                 echo self::branch_select('to_branch', 0, false);
                 echo '<button class="button button-small" name="wbam_unit_action" value="transfer">Move</button> ';
                 if (current_user_can('wbam_manage')) {
-                    echo '<button class="button button-small" name="wbam_unit_action" value="writeoff" onclick="return confirm(\'Write off this unit?\')">Write off</button>';
+                    echo '<button class="button button-small" name="wbam_unit_action" value="writeoff" onclick="return confirm(\'Write off this unit?\')">Write off</button> ';
                 }
+            }
+            if ($can_delete) {
+                echo '<button class="button button-small" name="wbam_unit_action" value="delete" onclick="return confirm(\'Delete ' . esc_js($u['unit_code']) . ' for good?' . ($u['status'] === 'in_stock' ? ' Its +1 is removed from Shopify stock too.' : '') . '\')" style="color:#b32d2e">Delete</button>';
             }
             echo '</form></td></tr>';
         }
-        if (!$units) echo '<tr><td colspan="9">Nothing found.</td></tr>';
+        if (!$units) echo '<tr><td colspan="' . ($can_delete ? 10 : 9) . '">Nothing found.</td></tr>';
         echo '</tbody></table></div>';
     }
 

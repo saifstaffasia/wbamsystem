@@ -360,6 +360,29 @@ class WBAM_Units {
         self::event($unit_id, 'write_off', $reason);
     }
 
+    /**
+     * Permanently delete a unit (admin cleanup — mistakes / test intakes).
+     * In-stock units take their +1 back out of Shopify first; if that adjustment
+     * fails the delete is aborted so stock never drifts. Sold lines keep their
+     * recorded cost but lose the unit link. Payouts and the event log go too.
+     */
+    public static function delete_unit(int $unit_id): string {
+        global $wpdb;
+        $u = self::get($unit_id);
+        if (!$u) throw new RuntimeException('Unknown unit.');
+        if ($u['status'] === 'in_stock' && (int) $u['inventory_item_id']) {
+            $branch = WBAM_Settings::branch((int) $u['branch_id']);
+            if ($branch) {
+                WBAM_Catalog::adjust_inventory((int) $u['inventory_item_id'], (int) $branch['shopify_location_id'], -1, 'correction');
+            }
+        }
+        $wpdb->update("{$wpdb->prefix}wbam_order_lines", ['unit_id' => null], ['unit_id' => $unit_id]);
+        $wpdb->delete("{$wpdb->prefix}wbam_payouts", ['unit_id' => $unit_id]);
+        $wpdb->delete("{$wpdb->prefix}wbam_unit_events", ['unit_id' => $unit_id]);
+        $wpdb->delete("{$wpdb->prefix}wbam_units", ['id' => $unit_id]);
+        return (string) $u['unit_code'];
+    }
+
     public static function transfer(int $unit_id, int $to_branch_id): void {
         global $wpdb;
         $u = self::get($unit_id);
