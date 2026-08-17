@@ -57,6 +57,8 @@ class WBAM_Units {
             'payout_method'     => sanitize_text_field($in['payout_method'] ?? ''),
             'battery_health'    => isset($in['battery_health']) && $in['battery_health'] !== '' ? (int) $in['battery_health'] : null,
             'checkmend_ref'     => sanitize_text_field($in['checkmend_ref'] ?? ''),
+            'seller_name'       => sanitize_text_field($in['seller']['name'] ?? ($in['source_ref'] ?? '')),
+            'seller_json'       => self::pack_seller((array) ($in['seller'] ?? [])),
             'notes'             => sanitize_textarea_field($in['notes'] ?? ''),
             'created_by'        => get_current_user_id(),
             'created_at'        => $now,
@@ -69,18 +71,7 @@ class WBAM_Units {
         self::event($id, 'intake', sprintf('%s @ %s, £%.2f, %s',
             $variant['title'], $branch['name'], (float) $in['purchase_price'], $in['source'] ?? 'buyback'));
 
-        // Money out (buyback/trade-in paid to the seller) → payouts ledger for cash reconciliation.
-        if (in_array($in['source'] ?? '', ['buyback', 'tradein'], true) && (float) ($in['purchase_price'] ?? 0) > 0) {
-            $wpdb->insert("{$wpdb->prefix}wbam_payouts", [
-                'branch_id' => (int) $in['branch_id'],
-                'unit_id'   => $id,
-                'amount'    => (float) $in['purchase_price'],
-                'method'    => sanitize_text_field($in['payout_method'] ?: 'cash'),
-                'reference' => sanitize_text_field($in['source_ref'] ?? ''),
-                'user_id'   => get_current_user_id(),
-                'created_at'=> $now,
-            ]);
-        }
+        self::record_payout($id, $in, $now);
 
         // Shopify side: +1 pooled stock, refresh rolling-average cost.
         WBAM_Catalog::adjust_inventory($variant['inventory_item_id'], (int) $branch['shopify_location_id'], +1, 'received');
@@ -131,6 +122,8 @@ class WBAM_Units {
             'source_ref'     => sanitize_text_field($in['source_ref'] ?? ''),
             'payout_method'  => sanitize_text_field($in['payout_method'] ?? ''),
             'battery_health' => isset($in['battery_health']) && $in['battery_health'] !== '' ? (int) $in['battery_health'] : null,
+            'seller_name'    => sanitize_text_field($in['seller']['name'] ?? ($in['source_ref'] ?? '')),
+            'seller_json'    => self::pack_seller((array) ($in['seller'] ?? [])),
             'notes'          => 'custom intake',
             'created_by'     => get_current_user_id(),
             'created_at'     => $now,
@@ -150,16 +143,87 @@ class WBAM_Units {
         ], ['id' => $id]);
         self::event($id, 'intake_custom', sprintf('%s (%s) @ %s, paid £%.2f, asking £%.2f', $title, $grade, $branch['name'], $paid, $sell));
 
-        if (in_array($in['source'] ?? '', ['buyback', 'tradein'], true) && $paid > 0) {
-            $wpdb->insert("{$wpdb->prefix}wbam_payouts", [
-                'branch_id' => (int) $in['branch_id'],
-                'unit_id'   => $id,
-                'amount'    => $paid,
-                'method'    => sanitize_text_field($in['payout_method'] ?: 'cash'),
-                'reference' => sanitize_text_field($in['source_ref'] ?? ''),
-                'user_id'   => get_current_user_id(),
-                'created_at'=> $now,
-            ]);
+        self::record_payout($id, $in, $now);
+        return self::get($id);
+    }
+
+    /** Normalise + store the seller/verification/device-extra block as JSON. */
+    private static function pack_seller(array $s): ?string {
+        $keys = ['name', 'dob', 'address1', 'address2', 'postcode', 'mobile', 'email', 'time_at_address',
+                 'id_type', 'id_ref', 'proof_of_address', 'document_date', 'ownership_evidence', 'evidence_ref',
+                 'imei2', 'serial', 'eid', 'network_lock', 'accessories', 'known_faults'];
+        $out = [];
+        foreach ($keys as $k) {
+            if (isset($s[$k]) && trim((string) $s[$k]) !== '') $out[$k] = sanitize_text_field((string) $s[$k]);
+        }
+        return $out ? wp_json_encode($out) : null;
+    }
+
+    /** Money out (buyback/trade-in) → payouts ledger, incl. bank details when paid by transfer. */
+    private static function record_payout(int $unit_id, array $in, string $now): void {
+        global $wpdb;
+        $paid = (float) ($in['purchase_price'] ?? 0);
+        if (!in_array($in['source'] ?? '', ['buyback', 'tradein'], true) || $paid <= 0) return;
+        $details = null;
+        $bank = (array) ($in['bank'] ?? []);
+        if ($bank) {
+            $clean = [];
+            foreach (['account_name', 'sort_code', 'account_number', 'reference'] as $k) {
+                if (!empty($bank[$k])) $clean[$k] = sanitize_text_field((string) $bank[$k]);
+            }
+            if ($clean) $details = wp_json_encode($clean);
+        }
+        $wpdb->insert("{$wpdb->prefix}wbam_payouts", [
+            'branch_id' => (int) $in['branch_id'],
+            'unit_id'   => $unit_id,
+            'amount'    => $paid,
+            'method'    => sanitize_text_field(($in['payout_method'] ?? '') ?: 'cash'),
+            'details'   => $details,
+            'reference' => sanitize_text_field($in['source_ref'] ?? ($in['seller']['name'] ?? '')),
+            'user_id'   => get_current_user_id(),
+            'created_at'=> $now,
+        ]);
+    }
+
+    /** Edit a unit after intake (typos, price corrections, seller details). */
+    public static function update_unit(int $id, array $f): array {
+        global $wpdb;
+        $u = self::get($id);
+        if (!$u) throw new RuntimeException('Unknown unit.');
+        $upd = [];
+        if (array_key_exists('imei', $f) && $f['imei'] !== '') {
+            $imei = strtoupper(preg_replace('/\s+/', '', (string) $f['imei']));
+            if (strlen($imei) < 5) throw new InvalidArgumentException('IMEI/serial too short.');
+            $dupe = $wpdb->get_var($wpdb->prepare(
+                "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved') AND id<>%d",
+                $imei, $id
+            ));
+            if ($dupe) throw new RuntimeException("That IMEI/serial is already in stock as $dupe.");
+            $upd['imei'] = $imei;
+        }
+        if (array_key_exists('purchase_price', $f) && $f['purchase_price'] !== '') {
+            $upd['purchase_price'] = (float) $f['purchase_price'];
+        }
+        if (array_key_exists('battery_health', $f)) {
+            $upd['battery_health'] = $f['battery_health'] === '' ? null : (int) $f['battery_health'];
+        }
+        foreach (['notes' => 'sanitize_textarea_field', 'source_ref' => 'sanitize_text_field',
+                  'payout_method' => 'sanitize_text_field', 'checkmend_ref' => 'sanitize_text_field',
+                  'seller_name' => 'sanitize_text_field'] as $k => $fn) {
+            if (array_key_exists($k, $f)) $upd[$k] = $fn((string) $f[$k]);
+        }
+        if (array_key_exists('seller', $f) && is_array($f['seller'])) {
+            $existing = $u['seller_json'] ? (json_decode($u['seller_json'], true) ?: []) : [];
+            $merged = array_merge($existing, $f['seller']);
+            $upd['seller_json'] = self::pack_seller($merged);
+            if (!empty($f['seller']['name'])) $upd['seller_name'] = sanitize_text_field((string) $f['seller']['name']);
+        }
+        if (!$upd) return $u;
+        $upd['updated_at'] = current_time('mysql');
+        $wpdb->update("{$wpdb->prefix}wbam_units", $upd, ['id' => $id]);
+        self::event($id, 'edited', implode(', ', array_keys($upd)));
+        if (isset($upd['purchase_price'])) {
+            try { WBAM_Catalog::refresh_variant_cost((int) $u['variant_id'], (int) $u['inventory_item_id']); } catch (Throwable $e) {}
         }
         return self::get($id);
     }
@@ -181,7 +245,11 @@ class WBAM_Units {
     public static function get(int $id): ?array {
         global $wpdb;
         $u = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wbam_units WHERE id=%d", $id), ARRAY_A);
-        if ($u) $u['label_url'] = WBAM_Labels::url($id);
+        if ($u) {
+            $u['label_url']       = WBAM_Labels::url($id);
+            $u['declaration_url'] = wp_nonce_url(admin_url('admin-post.php?action=wbam_declaration&unit=' . $id), 'wbam_decl_' . $id);
+            $u['seller']          = $u['seller_json'] ? (json_decode($u['seller_json'], true) ?: []) : [];
+        }
         return $u ?: null;
     }
 

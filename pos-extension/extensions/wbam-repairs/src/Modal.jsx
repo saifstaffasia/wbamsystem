@@ -1,8 +1,7 @@
 import {render} from 'preact';
-import {useState, useRef} from 'preact/hooks';
+import {useState} from 'preact/hooks';
 
-// Interim host (WP Engine) — switch to https://system.webuyanymobile.com and
-// re-run `shopify app deploy` when the real domain is connected.
+// Interim host (WP Engine) — switch to https://system.webuyanymobile.com and redeploy.
 const HUB = 'https://wbamsystem.wpenginepowered.com';
 
 export default async () => {
@@ -10,11 +9,10 @@ export default async () => {
 };
 
 /**
- * One modal, three flows, zero typing of ticket codes:
- *  - New booking: creates the ticket in the Hub (customer gets email/SMS),
- *    optionally drops the deposit straight into the POS cart.
- *  - Take payment: search open tickets, tap one, deposit/balance → cart line
- *    whose title is composed by the SERVER ("Repair deposit — T-0042 (iPhone 12)").
+ * Repairs at the till: book a repair (customer gets confirmation automatically,
+ * optional deposit straight into the basket) and take deposits/balances against
+ * existing tickets — the SERVER composes cart-line titles, staff never type codes.
+ * Device intake lives on its own tile ("Trade In Device Intake").
  */
 function Extension() {
   const [view, setView] = useState('home'); // home | book | pay
@@ -36,43 +34,21 @@ function Extension() {
   const [quote, setQuote] = useState('');
   const [deposit, setDeposit] = useState('');
 
-  const pickType = (r) => () => setRtype(rtype === r ? '' : r);
-  const tlabel = (r) => (rtype === r ? '✓ ' : '') + r;
-
   // payment fields
   const [q, setQ] = useState('');
   const [results, setResults] = useState([]);
   const [picked, setPicked] = useState(null);
   const [amount, setAmount] = useState('');
 
-  // intake (buy-in) fields
-  const [iImei, setIImei] = useState('');
-  const [iSearch, setISearch] = useState('');
-  const [iModels, setIModels] = useState([]);
-  const [iProduct, setIProduct] = useState(null);
-  const [iSel, setISel] = useState({});
-  const [iPrice, setIPrice] = useState('');
-  const [iSource, setISource] = useState('buyback');
-  const [iPayout, setIPayout] = useState('cash');
-  const [iBattery, setIBattery] = useState('');
-  const [iRef, setIRef] = useState('');
-
-  // custom-device intake (not in catalog)
-  const [iCustom, setICustom] = useState(false);
-  const [cTitle, setCTitle] = useState('');
-  const [cGrade, setCGrade] = useState('Used (B - Very Good)');
-  const [cSell, setCSell] = useState('');
-  const searchTimer = useRef(null);
+  const pickType = (r) => () => setRtype(rtype === r ? '' : r);
+  const tlabel = (r) => (rtype === r ? '✓ ' : '') + r;
+  const grab = (setter) => (e) => setter(e && e.currentTarget ? e.currentTarget.value : '');
 
   const call = async (path, opts = {}) => {
     const token = await shopify.session.getSessionToken();
     const res = await fetch(`${HUB}/wp-json/wbam/v1/pos/${path}`, {
       ...opts,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        ...(opts.headers || {}),
-      },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
     });
     const json = await res.json();
     if (!res.ok) throw new Error((json && json.message) || `HTTP ${res.status}`);
@@ -82,7 +58,7 @@ function Extension() {
   const addLine = async (ticketId, which, amt) => {
     const line = await call('line', {
       method: 'POST',
-      body: JSON.stringify({ticket_id: ticketId, which, amount: amt}),
+      body: JSON.stringify({ ticket_id: ticketId, which, amount: amt }),
     });
     await shopify.cart.addCustomSale({
       title: line.title,
@@ -157,97 +133,6 @@ function Extension() {
     setBusy(false);
   };
 
-  const grab = (setter) => (e) => setter(e && e.currentTarget ? e.currentTarget.value : '');
-
-  /* ---------------- intake (buy-in) ---------------- */
-
-  const doSearch = async (term) => {
-    if (!term || term.trim().length < 2) return;
-    try {
-      setIModels(await call(`models?term=${encodeURIComponent(term.trim())}`));
-    } catch (e) { /* silent for live search */ }
-  };
-
-  // Live search: results populate ~0.4s after the staff member stops typing.
-  const onSearchInput = (e) => {
-    const v = e && e.currentTarget ? e.currentTarget.value : '';
-    setISearch(v);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => doSearch(v), 400);
-  };
-
-  const searchModels = async () => {
-    setBusy(true);
-    setMsg('');
-    await doSearch(iSearch);
-    setBusy(false);
-  };
-
-  const chooseSource = (s) => {
-    setISource(s);
-    if (s === 'tradein') setIPayout('store_credit');
-  };
-
-  const optionsComplete = () =>
-    iProduct && Object.keys(iProduct.options || {}).every((n) => iSel[n]);
-
-  const submitIntake = async () => {
-    if (iCustom) {
-      if (!cTitle.trim()) { setMsg('Enter the device name.'); return; }
-      if (!(parseFloat(cSell) > 0)) { setMsg('Enter the selling price.'); return; }
-    } else {
-      if (!iProduct) { setMsg('Pick the model first.'); return; }
-      if (!optionsComplete()) { setMsg('Pick every option (colour / storage / condition).'); return; }
-    }
-    if (!(parseFloat(iPrice) >= 0) || iPrice === '') { setMsg('Enter the price paid.'); return; }
-    setBusy(true);
-    setMsg('');
-    try {
-      const body = {
-        imei: iImei,
-        purchase_price: parseFloat(iPrice),
-        source: iSource,
-        source_ref: iRef,
-        payout_method: iPayout,
-        battery_health: iBattery,
-        location_id: shopify.session.currentSession.locationId,
-      };
-      if (iCustom) {
-        body.custom = 1;
-        body.title = cTitle.trim();
-        body.grade = cGrade;
-        body.sell_price = parseFloat(cSell);
-      } else {
-        body.product_id = iProduct.product_id;
-        body.model_title = iProduct.title;
-        body.selected = iSel;
-      }
-      const res = await call('intake', { method: 'POST', body: JSON.stringify(body) });
-
-      if (iSource === 'tradein') {
-        const allowance = parseFloat(iPrice).toFixed(2);
-        // Cart attribute → shows under the order's "Additional details" and lets
-        // the Hub tie this unit to the sale. The £300-on-Trade-In payment line
-        // itself is the money record — no £0 line item needed.
-        try {
-          await shopify.cart.addCartProperties({
-            [`Trade-in ${res.unit_code}`]: `${res.title} — IMEI ${res.imei || iImei} — allowance £${allowance}`,
-          });
-        } catch (e) { /* older POS builds may lack this */ }
-        shopify.toast.show(`${res.unit_code} saved. At payment: tap "Trade In", enter £${allowance}, Accept — POS then asks for the rest by card/cash.`);
-      } else {
-        shopify.toast.show(`${res.unit_code} in stock — print its label from Hub → Units`);
-      }
-      setIImei(''); setISearch(''); setIModels([]); setIProduct(null); setISel({});
-      setIPrice(''); setISource('buyback'); setIPayout('cash'); setIBattery(''); setIRef('');
-      setICustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
-      setView('home');
-    } catch (e) {
-      setMsg(String((e && e.message) || e));
-    }
-    setBusy(false);
-  };
-
   return (
     <s-page heading="Repairs">
       <s-scroll-box>
@@ -267,10 +152,7 @@ function Extension() {
                 <s-button onClick={() => { setMsg(''); setView('pay'); }}>💳 Take deposit / balance</s-button>
               </s-box>
               <s-box padding="small">
-                <s-button onClick={() => { setMsg(''); setView('intake'); }}>📥 Intake device (buy-in)</s-button>
-              </s-box>
-              <s-box padding="small">
-                <s-text>Bookings confirm to the customer automatically. Payments are added to the current cart — check out as normal (cash, card or Trade In). Intake registers the IMEI, adds shelf stock and logs the payout.</s-text>
+                <s-text>Bookings confirm to the customer automatically. Payments are added to the current cart — check out as normal. Device buy-ins live on the "Trade In Device Intake" tile.</s-text>
               </s-box>
             </s-box>
           )}
@@ -329,76 +211,6 @@ function Extension() {
                   <s-box padding="small"><s-text-field label="Amount £" value={amount} onChange={grab(setAmount)} onInput={grab(setAmount)} /></s-box>
                   <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add DEPOSIT to cart</s-button></s-box>
                   <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('balance')}>Add BALANCE to cart</s-button></s-box>
-                </s-box>
-              ) : null}
-              <s-box padding="small"><s-button onClick={() => setView('home')}>← Back</s-button></s-box>
-            </s-box>
-          )}
-
-          {view === 'intake' && (
-            <s-box>
-              <s-box padding="small"><s-text-field label="IMEI / serial (scan here — dial *#06#)" value={iImei} onChange={grab(setIImei)} onInput={grab(setIImei)} /></s-box>
-              {!iCustom ? (
-                <s-box>
-                  <s-box padding="small"><s-text-field label="Model search — results appear as you type" value={iSearch} onChange={onSearchInput} onInput={onSearchInput} /></s-box>
-                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={searchModels}>{busy ? 'Searching…' : 'Find model'}</s-button></s-box>
-                  <s-box>
-                    {iModels.map((m) => (
-                      <s-box padding="small" key={m.product_id}>
-                        <s-button onClick={() => { setIProduct(m); setISel({}); }}>
-                          {`${iProduct && iProduct.product_id === m.product_id ? '✓ ' : ''}${m.title}`}
-                        </s-button>
-                      </s-box>
-                    ))}
-                  </s-box>
-                </s-box>
-              ) : null}
-              <s-box padding="small">
-                <s-button onClick={() => { setICustom(!iCustom); setIProduct(null); setISel({}); setMsg(''); }}>
-                  {iCustom ? '← Back to catalog search' : '➕ Not in the list? Custom device'}
-                </s-button>
-              </s-box>
-              {iCustom ? (
-                <s-box>
-                  <s-box padding="small"><s-text-field label="Device name (e.g. Google Pixel 8 128GB Black)" value={cTitle} onChange={grab(setCTitle)} onInput={grab(setCTitle)} /></s-box>
-                  <s-box padding="small"><s-text>Grade{cGrade ? `: ${cGrade}` : ''}</s-text></s-box>
-                  <s-box padding="small"><s-button onClick={() => setCGrade('New')}>{`${cGrade === 'New' ? '✓ ' : ''}New`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => setCGrade('Used (A - Excellent)')}>{`${cGrade === 'Used (A - Excellent)' ? '✓ ' : ''}Used (A - Excellent)`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => setCGrade('Used (B - Very Good)')}>{`${cGrade === 'Used (B - Very Good)' ? '✓ ' : ''}Used (B - Very Good)`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => setCGrade('Used (C - Good)')}>{`${cGrade === 'Used (C - Good)' ? '✓ ' : ''}Used (C - Good)`}</s-button></s-box>
-                  <s-box padding="small"><s-text-field label="Selling price £ (what it'll be listed at)" value={cSell} onChange={grab(setCSell)} onInput={grab(setCSell)} /></s-box>
-                </s-box>
-              ) : null}
-              {(iProduct && !iCustom) ? (
-                <s-box>
-                  {Object.entries(iProduct.options || {}).map(([optName, vals]) => (
-                    <s-box key={optName}>
-                      <s-box padding="small"><s-text>{optName}{iSel[optName] ? `: ${iSel[optName]}` : ''}</s-text></s-box>
-                      <s-box>
-                        {vals.map((v) => (
-                          <s-box padding="small" key={v}>
-                            <s-button onClick={() => setISel({ ...iSel, [optName]: v })}>{`${iSel[optName] === v ? '✓ ' : ''}${v}`}</s-button>
-                          </s-box>
-                        ))}
-                      </s-box>
-                    </s-box>
-                  ))}
-                </s-box>
-              ) : null}
-              {(iProduct || iCustom) ? (
-                <s-box>
-                  <s-box padding="small"><s-text-field label={iSource === 'tradein' ? 'Trade-in allowance £ (what you give them)' : 'Price paid £'} value={iPrice} onChange={grab(setIPrice)} onInput={grab(setIPrice)} /></s-box>
-                  <s-box padding="small"><s-text>Source</s-text></s-box>
-                  <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${iSource === 'buyback' ? '✓ ' : ''}Buy-in (walk-in seller)`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => chooseSource('tradein')}>{`${iSource === 'tradein' ? '✓ ' : ''}Trade-in (against this sale)`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => chooseSource('supplier')}>{`${iSource === 'supplier' ? '✓ ' : ''}Supplier stock`}</s-button></s-box>
-                  <s-box padding="small"><s-text>Paid by</s-text></s-box>
-                  <s-box padding="small"><s-button onClick={() => setIPayout('cash')}>{`${iPayout === 'cash' ? '✓ ' : ''}Cash from till`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => setIPayout('bank')}>{`${iPayout === 'bank' ? '✓ ' : ''}Bank transfer`}</s-button></s-box>
-                  <s-box padding="small"><s-button onClick={() => setIPayout('store_credit')}>{`${iPayout === 'store_credit' ? '✓ ' : ''}Trade-in value / store credit`}</s-button></s-box>
-                  <s-box padding="small"><s-text-field label="Battery % (optional)" value={iBattery} onChange={grab(setIBattery)} onInput={grab(setIBattery)} /></s-box>
-                  <s-box padding="small"><s-text-field label="Seller name / ref (optional)" value={iRef} onChange={grab(setIRef)} onInput={grab(setIRef)} /></s-box>
-                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={submitIntake}>{busy ? 'Saving…' : 'Save intake (+1 stock)'}</s-button></s-box>
                 </s-box>
               ) : null}
               <s-box padding="small"><s-button onClick={() => setView('home')}>← Back</s-button></s-box>

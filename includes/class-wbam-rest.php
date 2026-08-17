@@ -88,6 +88,143 @@ class WBAM_Rest {
             'callback' => [self::class, 'pos_intake'],
             'permission_callback' => [self::class, 'pos_auth'],
         ]);
+
+        /* ---- front-end staff app (cookie + nonce auth) ---- */
+        $staff = fn() => is_user_logged_in() && current_user_can('wbam_use');
+
+        register_rest_route('wbam/v1', '/app/bootstrap', [
+            'methods' => 'GET',
+            'callback' => fn() => rest_ensure_response([
+                'branches' => WBAM_Settings::branches(),
+                'statuses' => WBAM_Tickets::STATUSES,
+                'rtypes'   => ['Diagnosis', 'Screen Change', 'Battery Change', 'Backglass Change', 'Other Repair'],
+                'grades'   => ['New', 'Used (A - Excellent)', 'Used (B - Very Good)', 'Used (C - Good)'],
+                'parts'    => WBAM_Parts::parts(),
+                'vendors'  => WBAM_Parts::vendors(),
+            ]),
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/units', [
+            'methods' => 'GET',
+            'callback' => function (WP_REST_Request $r) {
+                $rows = WBAM_Units::search(['q' => (string) $r['q'], 'status' => (string) $r['status'], 'branch_id' => (int) $r['branch']]);
+                return rest_ensure_response(array_map(fn($u) => WBAM_Units::get((int) $u['id']), $rows));
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/unit/(?P<id>\d+)/edit', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                try {
+                    return rest_ensure_response(['ok' => true, 'unit' => WBAM_Units::update_unit((int) $r['id'], (array) $r->get_json_params())]);
+                } catch (Throwable $e) { return new WP_Error('wbam_edit', $e->getMessage(), ['status' => 400]); }
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/reconcile', [
+            'methods' => 'GET',
+            'callback' => function () {
+                global $wpdb;
+                $rows = WBAM_Units::pending_reconcile();
+                foreach ($rows as &$row) {
+                    $row['candidates'] = $wpdb->get_results($wpdb->prepare(
+                        "SELECT id, unit_code, imei FROM {$wpdb->prefix}wbam_units WHERE variant_id=%d AND status='in_stock'",
+                        (int) $row['variant_id']), ARRAY_A) ?: [];
+                }
+                return rest_ensure_response($rows);
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/reconcile/attach', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                global $wpdb;
+                $unit = WBAM_Units::by_code((string) $r['unit_scan']);
+                $line = $wpdb->get_row($wpdb->prepare(
+                    "SELECT l.*, o.name FROM {$wpdb->prefix}wbam_order_lines l JOIN {$wpdb->prefix}wbam_orders o ON o.order_id=l.order_id WHERE l.id=%d",
+                    (int) $r['line_row']), ARRAY_A);
+                if (!$unit || !$line || $unit['status'] !== 'in_stock' || (int) $unit['variant_id'] !== (int) $line['variant_id']) {
+                    return new WP_Error('wbam_rec', 'No match — check the scan (same model/variant, still in stock).', ['status' => 400]);
+                }
+                WBAM_Units::mark_sold((int) $unit['id'], (int) $line['order_id'], $line['name'], (float) $line['price'], (int) $line['id']);
+                return rest_ensure_response(['ok' => true]);
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/tickets', [
+            'methods' => 'GET',
+            'callback' => fn(WP_REST_Request $r) => rest_ensure_response(WBAM_Tickets::list(['q' => (string) $r['q'], 'all' => (bool) $r['all']])),
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/ticket/new', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                try {
+                    $p = (array) $r->get_json_params();
+                    return rest_ensure_response(['ok' => true, 'ticket' => WBAM_Tickets::create($p, 'walkin')]);
+                } catch (Throwable $e) { return new WP_Error('wbam_tk', $e->getMessage(), ['status' => 400]); }
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/ticket/(?P<id>\d+)', [
+            'methods' => 'GET',
+            'callback' => function (WP_REST_Request $r) {
+                global $wpdb;
+                $id = (int) $r['id'];
+                $t = WBAM_Tickets::get($id);
+                if (!$t) return new WP_Error('wbam_tk', 'Unknown ticket', ['status' => 404]);
+                $t['economics'] = WBAM_Tickets::economics($id);
+                $t['parts'] = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wbam_ticket_parts WHERE ticket_id=%d", $id), ARRAY_A) ?: [];
+                $t['events'] = $wpdb->get_results($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wbam_ticket_events WHERE ticket_id=%d ORDER BY id DESC LIMIT 40", $id), ARRAY_A) ?: [];
+                return rest_ensure_response($t);
+            },
+            'permission_callback' => $staff,
+        ]);
+        register_rest_route('wbam/v1', '/app/ticket/(?P<id>\d+)/(?P<op>status|save|draft|part-stock|part-order)', [
+            'methods' => 'POST',
+            'callback' => [self::class, 'app_ticket_op'],
+            'permission_callback' => $staff,
+        ]);
+    }
+
+    public static function app_ticket_op(WP_REST_Request $r) {
+        $id = (int) $r['id'];
+        $p  = (array) $r->get_json_params();
+        try {
+            switch ($r['op']) {
+                case 'status':
+                    return rest_ensure_response(['ok' => true, 'ticket' => WBAM_Tickets::set_status($id, sanitize_key($p['status'] ?? ''), sanitize_text_field($p['note'] ?? ''))]);
+                case 'save':
+                    WBAM_Tickets::update_fields($id, [
+                        'diagnosis'   => $p['diagnosis'] ?? '',
+                        'quote'       => ($p['quote'] ?? '') !== '' ? (float) $p['quote'] : null,
+                        'repair_type' => $p['repair_type'] ?? '',
+                        'due_date'    => $p['due_date'] ?? '',
+                        'device_held' => isset($p['device_held']) ? (int) !!$p['device_held'] : 1,
+                    ]);
+                    return rest_ensure_response(['ok' => true, 'ticket' => WBAM_Tickets::get($id)]);
+                case 'draft':
+                    $url = WBAM_Tickets::draft_payment($id, (float) ($p['amount'] ?? 0), ($p['which'] ?? 'deposit') === 'balance' ? 'balance' : 'deposit');
+                    return rest_ensure_response(['ok' => true, 'url' => $url]);
+                case 'part-stock':
+                    WBAM_Parts::use_from_stock($id, (int) ($p['part_id'] ?? 0), max(1, (int) ($p['qty'] ?? 1)));
+                    return rest_ensure_response(['ok' => true]);
+                case 'part-order':
+                    $t = WBAM_Tickets::get($id);
+                    WBAM_Parts::create_po((int) ($p['vendor_id'] ?? 0), (int) ($t['branch_id'] ?? 0), [[
+                        'ticket_id' => $id,
+                        'description' => sanitize_text_field($p['description'] ?? ''),
+                        'product_url' => esc_url_raw($p['product_url'] ?? ''),
+                        'qty' => max(1, (int) ($p['qty'] ?? 1)),
+                        'unit_cost' => (float) ($p['unit_cost'] ?? 0),
+                    ]]);
+                    WBAM_Tickets::set_status($id, 'awaiting_parts', 'parts ordered');
+                    return rest_ensure_response(['ok' => true]);
+            }
+        } catch (Throwable $e) {
+            return new WP_Error('wbam_tk', $e->getMessage(), ['status' => 400]);
+        }
+        return new WP_Error('wbam_tk', 'Bad op', ['status' => 400]);
     }
 
     /* ================= POS extension auth + endpoints ================= */
@@ -154,28 +291,7 @@ class WBAM_Rest {
             $branch = null;
             if ((int) $r['location_id']) $branch = WBAM_Settings::branch_by_location((int) $r['location_id']);
             if (!$branch) { $bs = WBAM_Settings::branches(); $branch = $bs[0] ?? null; }
-            $common = [
-                'imei'           => (string) $r['imei'],
-                'purchase_price' => (float) $r['purchase_price'],
-                'branch_id'      => (int) ($branch['id'] ?? 0),
-                'source'         => (string) $r['source'],
-                'source_ref'     => (string) $r['source_ref'],
-                'payout_method'  => (string) $r['payout_method'],
-                'battery_health' => (string) $r['battery_health'],
-            ];
-            if ((int) $r['custom'] === 1) {
-                $unit = WBAM_Units::intake_custom($common + [
-                    'title'      => (string) $r['title'],
-                    'grade'      => (string) $r['grade'],
-                    'sell_price' => (float) $r['sell_price'],
-                ]);
-            } else {
-                $unit = WBAM_Units::intake($common + [
-                    'product_id'  => (int) $r['product_id'],
-                    'model_title' => (string) $r['model_title'],
-                    'selected'    => (array) $r['selected'],
-                ]);
-            }
+            $unit = self::do_intake($r, (int) ($branch['id'] ?? 0));
             return rest_ensure_response([
                 'ok'        => true,
                 'unit_code' => $unit['unit_code'],
@@ -262,23 +378,39 @@ class WBAM_Rest {
         return $res;
     }
 
+    /** Shared intake dispatcher (staff app + POS tile): catalog or custom path. */
+    private static function do_intake(WP_REST_Request $r, int $branch_id): array {
+        $common = [
+            'imei'           => (string) $r['imei'],
+            'purchase_price' => (float) $r['purchase_price'],
+            'branch_id'      => $branch_id,
+            'source'         => (string) $r['source'],
+            'source_ref'     => (string) $r['source_ref'],
+            'payout_method'  => (string) $r['payout_method'],
+            'battery_health' => (string) $r['battery_health'],
+            'checkmend_ref'  => (string) $r['checkmend_ref'],
+            'notes'          => (string) $r['notes'],
+            'seller'         => (array) ($r['seller'] ?? []),
+            'bank'           => (array) ($r['bank'] ?? []),
+        ];
+        if ((int) $r['custom'] === 1) {
+            return WBAM_Units::intake_custom($common + [
+                'title'      => (string) $r['title'],
+                'grade'      => (string) $r['grade'],
+                'sell_price' => (float) $r['sell_price'],
+            ]);
+        }
+        return WBAM_Units::intake($common + [
+            'product_id'     => (int) $r['product_id'],
+            'model_title'    => (string) $r['model_title'],
+            'selected'       => (array) $r['selected'],
+            'price_override' => (string) $r['price_override'],
+        ]);
+    }
+
     public static function intake(WP_REST_Request $r) {
         try {
-            $unit = WBAM_Units::intake([
-                'imei'           => (string) $r['imei'],
-                'product_id'     => (int) $r['product_id'],
-                'model_title'    => (string) $r['model_title'],
-                'selected'       => (array) $r['selected'],
-                'purchase_price' => (float) $r['purchase_price'],
-                'branch_id'      => (int) $r['branch_id'],
-                'source'         => (string) $r['source'],
-                'source_ref'     => (string) $r['source_ref'],
-                'payout_method'  => (string) $r['payout_method'],
-                'battery_health' => (string) $r['battery_health'],
-                'checkmend_ref'  => (string) $r['checkmend_ref'],
-                'notes'          => (string) $r['notes'],
-                'price_override' => (string) $r['price_override'],
-            ]);
+            $unit = self::do_intake($r, (int) $r['branch_id']);
             return rest_ensure_response(['ok' => true, 'unit' => $unit]);
         } catch (Throwable $e) {
             return new WP_Error('wbam_intake', $e->getMessage(), ['status' => 400]);

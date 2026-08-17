@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) exit;
 
 class WBAM_Install {
 
-    const DB_VER = '2';
+    const DB_VER = '3';
 
     public static function activate(): void {
         self::tables();
@@ -89,6 +89,8 @@ class WBAM_Install {
             payout_method VARCHAR(16) NOT NULL DEFAULT '',
             battery_health TINYINT NULL,
             checkmend_ref VARCHAR(64) NOT NULL DEFAULT '',
+            seller_name VARCHAR(128) NOT NULL DEFAULT '',
+            seller_json LONGTEXT NULL,
             notes TEXT NULL,
             created_by BIGINT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL,
@@ -178,6 +180,7 @@ class WBAM_Install {
             unit_id BIGINT UNSIGNED NULL,
             amount DECIMAL(10,2) NOT NULL DEFAULT 0,
             method VARCHAR(16) NOT NULL DEFAULT 'cash',
+            details LONGTEXT NULL,
             reference VARCHAR(255) NOT NULL DEFAULT '',
             user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
             created_at DATETIME NOT NULL,

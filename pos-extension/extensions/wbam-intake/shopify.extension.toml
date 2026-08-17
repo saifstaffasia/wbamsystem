@@ -1,0 +1,16 @@
+api_version = "2026-07"
+
+[[extensions]]
+type = "ui_extension"
+name = "Trade In Device Intake"
+handle = "wbam-intake"
+uid = "34bc29d9-351c-2632-15d0-13129ce3c7ad625c558d"
+description = "Buy in / trade in a device: IMEI, model or custom, seller details, bank payout — creates stock and the payout record."
+
+  [[extensions.targeting]]
+  target = "pos.home.tile.render"
+  module = "./src/Tile.jsx"
+
+  [[extensions.targeting]]
+  target = "pos.home.modal.render"
+  module = "./src/Modal.jsx"

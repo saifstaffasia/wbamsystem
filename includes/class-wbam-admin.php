@@ -170,7 +170,8 @@ class WBAM_Admin {
                . '<td>£' . number_format((float) $u['purchase_price'], 2) . '</td>'
                . '<td>' . ($u['status'] === 'sold' ? esc_html($u['order_name']) . ' £' . number_format((float) $u['sale_price'], 2) : '—') . '</td>'
                . '<td>' . esc_html(mysql2date('j M', $u['created_at'])) . '</td>'
-               . '<td class="wbam-actions"><a class="button button-small" target="_blank" href="' . esc_url(WBAM_Labels::url((int) $u['id'])) . '">Label</a> ';
+               . '<td class="wbam-actions"><a class="button button-small" target="_blank" href="' . esc_url(WBAM_Labels::url((int) $u['id'])) . '">Label</a> '
+               . '<a class="button button-small" target="_blank" href="' . esc_url(wp_nonce_url(admin_url('admin-post.php?action=wbam_declaration&unit=' . (int) $u['id']), 'wbam_decl_' . (int) $u['id'])) . '">Declaration</a> ';
             echo '<form method="post" style="display:inline">';
             wp_nonce_field('wbam_units');
             echo '<input type="hidden" name="unit_id" value="' . (int) $u['id'] . '">';
