@@ -2,7 +2,7 @@ import {render} from 'preact';
 import {useState} from 'preact/hooks';
 
 // Interim host (WP Engine) — switch to https://system.webuyanymobile.com and redeploy.
-const HUB = 'https://wbamsystem.wpenginepowered.com';
+const HUB = 'https://system.webuyanymobile.com';
 
 export default async () => {
   render(<Extension />, document.body);

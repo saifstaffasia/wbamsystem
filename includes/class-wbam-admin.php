@@ -627,7 +627,9 @@ class WBAM_Admin {
                         break;
                     case 'webhooks':
                         $r = WBAM_Webhooks::register();
-                        echo '<div class="notice notice-success"><p>Webhooks — added: ' . esc_html(implode(', ', $r['registered']) ?: 'none') . '; already present: ' . esc_html(implode(', ', $r['already']) ?: 'none') . '.</p></div>';
+                        echo '<div class="notice notice-success"><p>Webhooks — added: ' . esc_html(implode(', ', $r['registered']) ?: 'none')
+                           . '; already present: ' . esc_html(implode(', ', $r['already']) ?: 'none')
+                           . (!empty($r['pruned']) ? '; pruned old-domain hooks: ' . esc_html(implode(', ', $r['pruned'])) : '') . '.</p></div>';
                         break;
                     case 'backfill':
                         $r = WBAM_Sync::backfill_step(59);

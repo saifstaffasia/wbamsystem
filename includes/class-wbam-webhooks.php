@@ -13,13 +13,27 @@ class WBAM_Webhooks {
         return rest_url('wbam/v1/webhook');
     }
 
-    /** Idempotently register our topics against this site. */
+    /**
+     * Idempotently register our topics against this site — and prune our own
+     * webhooks left pointing at an old address (domain moves), so orders are
+     * never processed twice.
+     */
     public static function register(): array {
         $client = WBAM_Shopify::i();
         [$existing] = $client->rest('GET', '/webhooks.json?limit=250');
         $have = [];
+        $pruned = [];
         foreach ((array) ($existing['webhooks'] ?? []) as $w) {
-            if (($w['address'] ?? '') === self::address()) $have[$w['topic']] = true;
+            $addr = (string) ($w['address'] ?? '');
+            if ($addr === self::address()) {
+                $have[$w['topic']] = true;
+            } elseif (substr($addr, -strlen('/wbam/v1/webhook')) === '/wbam/v1/webhook') {
+                // Ours, but a previous domain — remove.
+                try {
+                    $client->rest('DELETE', '/webhooks/' . (int) $w['id'] . '.json');
+                    $pruned[] = $w['topic'] . ' @ ' . wp_parse_url($addr, PHP_URL_HOST);
+                } catch (Throwable $e) {}
+            }
         }
         $added = [];
         foreach (self::TOPICS as $topic) {
@@ -29,7 +43,7 @@ class WBAM_Webhooks {
             ]]);
             $added[] = $topic;
         }
-        return ['registered' => $added, 'already' => array_keys($have)];
+        return ['registered' => $added, 'already' => array_keys($have), 'pruned' => $pruned];
     }
 
     public static function verify(WP_REST_Request $req): bool {
