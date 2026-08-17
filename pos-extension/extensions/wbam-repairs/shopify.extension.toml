@@ -4,6 +4,7 @@ api_version = "2026-07"
 type = "ui_extension"
 name = "WBAM Repairs"
 handle = "wbam-repairs"
+uid = "7f7b50cc-cbc9-1fff-4228-0cfe934526043dcec976"
 description = "Book repairs and take deposits/balances from the POS smart grid — no typing."
 
   [[extensions.targeting]]

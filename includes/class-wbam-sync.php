@@ -83,6 +83,9 @@ class WBAM_Sync {
                     case 'publish_product':
                         WBAM_Catalog::publish_to_pos(WBAM_Shopify::gid('Product', (int) $payload['product_id']));
                         $ok = true; break;
+                    case 'order_attrs':
+                        WBAM_Catalog::append_order_attributes((int) $payload['order_id'], (array) $payload['attrs']);
+                        $ok = true; break;
                 }
             } catch (Throwable $e) {
                 $wpdb->update("{$wpdb->prefix}wbam_queue", [

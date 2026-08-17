@@ -179,6 +179,7 @@ class WBAM_Rest {
             return rest_ensure_response([
                 'ok'        => true,
                 'unit_code' => $unit['unit_code'],
+                'imei'      => $unit['imei'],
                 'title'     => trim($unit['model_title'] . ' — ' . $unit['variant_title']),
             ]);
         } catch (Throwable $e) {

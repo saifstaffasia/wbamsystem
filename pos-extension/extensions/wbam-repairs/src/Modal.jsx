@@ -226,19 +226,14 @@ function Extension() {
 
       if (iSource === 'tradein') {
         const allowance = parseFloat(iPrice).toFixed(2);
-        // Marker 1: cart attribute (reliable) — the Hub links unit ↔ order from it.
+        // Cart attribute → shows under the order's "Additional details" and lets
+        // the Hub tie this unit to the sale. The £300-on-Trade-In payment line
+        // itself is the money record — no £0 line item needed.
         try {
-          await shopify.cart.addCartProperties({ [`Trade-in ${res.unit_code}`]: `${res.title} — allowance £${allowance}` });
-        } catch (e) { /* older POS builds may lack this */ }
-        // Marker 2: £0 receipt line (best effort — some builds refuse £0 custom sales).
-        try {
-          await shopify.cart.addCustomSale({
-            title: `Trade-in — ${res.unit_code} (${res.title}) — allowance £${allowance}`,
-            price: '0.00',
-            quantity: 1,
-            taxable: false,
+          await shopify.cart.addCartProperties({
+            [`Trade-in ${res.unit_code}`]: `${res.title} — IMEI ${res.imei || iImei} — allowance £${allowance}`,
           });
-        } catch (e) {}
+        } catch (e) { /* older POS builds may lack this */ }
         shopify.toast.show(`${res.unit_code} saved. At payment: tap "Trade In", enter £${allowance}, Accept — POS then asks for the rest by card/cash.`);
       } else {
         shopify.toast.show(`${res.unit_code} in stock — print its label from Hub → Units`);

@@ -216,6 +216,15 @@ class WBAM_Units {
         self::event($unit_id, 'sold', "$order_name @ £" . number_format($sale_price, 2));
         $u = self::get($unit_id);
         try { WBAM_Catalog::refresh_variant_cost((int) $u['variant_id'], (int) $u['inventory_item_id']); } catch (Throwable $e) {}
+
+        // Stamp the sold unit's IMEI onto the order's Additional details —
+        // replaces the manual note staff used to type on every phone sale.
+        $attrs = ['Sold ' . $u['unit_code'] => trim($u['model_title'] . ' ' . $u['variant_title']) . ' — IMEI ' . $u['imei']];
+        try {
+            WBAM_Catalog::append_order_attributes($order_id, $attrs);
+        } catch (Throwable $e) {
+            WBAM_Sync::queue('order_attrs', ['order_id' => $order_id, 'attrs' => $attrs], $e->getMessage());
+        }
     }
 
     /**

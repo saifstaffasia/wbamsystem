@@ -93,6 +93,33 @@ class WBAM_Catalog {
         ];
     }
 
+    /**
+     * Append key/value pairs to an order's custom attributes ("Additional details"
+     * in admin) — e.g. "Sold U00042" → "iPhone 16 Pro … — IMEI 358…". Merges with
+     * whatever is already there.
+     */
+    public static function append_order_attributes(int $order_id, array $kv): void {
+        $gid = WBAM_Shopify::gid('Order', $order_id);
+        $res = WBAM_Shopify::i()->graphql(
+            'query($id: ID!) { order(id: $id) { customAttributes { key value } } }',
+            ['id' => $gid]
+        );
+        $attrs = [];
+        foreach (($res['data']['order']['customAttributes'] ?? []) as $a) {
+            $attrs[(string) $a['key']] = (string) ($a['value'] ?? '');
+        }
+        foreach ($kv as $k => $v) $attrs[(string) $k] = (string) $v;
+        $input = [];
+        foreach ($attrs as $k => $v) $input[] = ['key' => $k, 'value' => $v];
+
+        $res2 = self::run_idem(
+            'mutation($input: OrderInput!) { orderUpdate(input: $input)%IDEM% { userErrors { field message } } }',
+            ['input' => ['id' => $gid, 'customAttributes' => $input]]
+        );
+        $errs = $res2['data']['orderUpdate']['userErrors'] ?? [];
+        if ($errs) throw new RuntimeException('Order attributes failed: ' . wp_json_encode($errs));
+    }
+
     /** Publish a product to the Point of Sale channel (publication id cached). */
     public static function publish_to_pos(string $product_gid): void {
         $pub = WBAM_Settings::state_get('pos_publication_id');
