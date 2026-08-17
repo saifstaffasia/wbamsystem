@@ -1,4 +1,4 @@
-/* WBAM Hub — staff front-end app (no wp-admin needed). Vanilla JS, hash views. */
+/* WBAM System — staff front-end app (no wp-admin needed). Vanilla JS, hash views. */
 (function () {
   const A = window.WBAMAPP || {};
   const root = document.getElementById('wbam-app');
@@ -29,7 +29,7 @@
   if (A.reports) VIEWS.unshift(['dash', 'Dashboard']);
   function shell() {
     root.innerHTML =
-      '<div class="wa-top"><span class="wa-logo">WBAM Hub</span><nav>' +
+      '<div class="wa-top"><span class="wa-logo">WBAM System</span><nav>' +
       VIEWS.map(([k, l]) => `<a href="#${k}" data-v="${k}">${l}</a>`).join('') +
       `</nav><span class="wa-user">${esc(A.user)}${A.admin ? ` · <a href="${A.admin}">Admin</a>` : ''} · <a href="${A.logout}">Log out</a></span></div>` +
       '<div class="wa-main" id="wa-main"></div>';
@@ -57,16 +57,18 @@
       const t = r.totals;
       q('#wa-rep').innerHTML =
         `<div class="wa-tiles">
-          <div class="t"><span>Sales</span><b>${money(t.gross)}</b><small>${t.orders} orders</small></div>
-          <div class="t"><span>Refunds</span><b>${money(t.refunded)}</b><small>net ${money(t.net)}</small></div>
-          <div class="t"><span>Gross profit</span><b>${money(t.gp)}</b><small>${t.gp_pct != null ? t.gp_pct + '%' : '—'}</small></div>
+          <div class="t"><span>Sales</span><b>${money(t.gross)}</b><small>${t.orders} order${t.orders === 1 ? '' : 's'}</small></div>
+          <div class="t"><span>Refunds</span><b>${money(t.refunded)}</b><small>refunds dated in this range</small></div>
+          <div class="t"><span>Net sales</span><b>${money(t.net)}</b><small>sales − refunds</small></div>
+          <div class="t"><span>Gross profit</span><b>${money(t.gp)}</b><small>${t.gp_pct != null ? t.gp_pct + '% of net' : '—'}${t.untracked_cost_lines ? ' · ' + t.untracked_cost_lines + ' lines w/o cost' : ''}</small></div>
           <div class="t"><span>Buy-ins</span><b>${money(r.buyback.spend)}</b><small>${r.buyback.intake_units} device(s)</small></div>
           <div class="t"><span>Repairs</span><b>${money(r.repairs.revenue)}</b><small>parts ${money(r.repairs.parts_cost)}</small></div>
         </div>
-        <div class="wa-grid" style="grid-template-columns:1fr 1fr;align-items:start">
+        <div class="wa-cols2">
           <div><h3>Payments</h3><table class="wa-list">${Object.entries(r.tenders).map(([k, v]) => `<tr><td>${esc(k)}</td><td style="text-align:right">${money(v)}</td></tr>`).join('') || '<tr><td>None</td></tr>'}</table></div>
           <div><h3>Staff</h3><table class="wa-list">${r.staff.map((s) => `<tr><td>${esc(s.label)}</td><td>${s.orders_n}</td><td style="text-align:right">${money(s.sales)}</td><td style="text-align:right">GP ${money(s.gp)}</td></tr>`).join('') || '<tr><td>None</td></tr>'}</table></div>
-        </div>`;
+        </div>
+        <p class="wa-sub">Refunds count on the day the refund was made (same as Shopify). GP = line revenue − refunds − recorded costs.</p>`;
     } catch (e) { q('#wa-rep').innerHTML = `<div class="wa-msg err">${esc(e.message)}</div>`; }
   }
 
@@ -109,7 +111,7 @@
       </div>
       <h3>Purchase</h3><div class="wa-grid">
         <label id="in-price-l">Price paid £ *<input id="in-price" type="number" step="0.01"></label>
-        <label>Source<select id="in-source"><option value="buyback">Buy-in (walk-in seller)</option><option value="tradein">Trade-in (against a sale)</option><option value="supplier">Supplier stock</option></select></label>
+        <label>Source<select id="in-source"><option value="buyback">Buy-in (Cash sale from private seller)</option><option value="tradein">Trade-in (against a sale)</option><option value="supplier">Supplier Stock</option></select></label>
         <label>Paid by<select id="in-payout"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="store_credit">Trade-in value / store credit</option></select></label>
         <label>Battery %<input id="in-batt" type="number" min="0" max="100"></label>
         <label>Stolen-check ref<input id="in-cm"></label>

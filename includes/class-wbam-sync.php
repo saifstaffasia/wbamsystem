@@ -34,6 +34,46 @@ class WBAM_Sync {
         return $n;
     }
 
+    /**
+     * Resumable backfill — pulls the range in slices inside a ~30s budget so it
+     * never trips the host's 60s limit. Keeps a cursor; call again to continue.
+     * Returns ['pulled'=>n, 'done'=>bool, 'from'=>…, 'to'=>…].
+     */
+    public static function backfill_step(int $days = 59, int $slice_days = 5, int $budget_s = 30): array {
+        $tz = wp_timezone();
+        $target_from = new DateTime("-{$days} days", $tz);
+        $cursor_iso = (string) WBAM_Settings::state_get('backfill_cursor');
+        $cursor = null;
+        if ($cursor_iso) {
+            try { $cursor = new DateTime($cursor_iso); $cursor->setTimezone($tz); } catch (Throwable $e) { $cursor = null; }
+        }
+        // Fresh run (no cursor, or cursor older than a day means a finished/stale run): start from now.
+        if (!$cursor || $cursor <= $target_from) $cursor = new DateTime('now', $tz);
+
+        $t0 = time();
+        $pulled = 0;
+        $first_to = $cursor->format('Y-m-d H:i');
+        while ($cursor > $target_from && (time() - $t0) < $budget_s) {
+            $to   = clone $cursor;
+            $from = (clone $cursor)->modify("-{$slice_days} days");
+            if ($from < $target_from) $from = clone $target_from;
+            $pulled += WBAM_Warehouse::pull_range($from->format('c'), $to->format('c'));
+            $cursor = $from;
+            WBAM_Settings::state_set('backfill_cursor', $cursor->format('c'));
+        }
+        $done = $cursor <= $target_from;
+        if ($done) {
+            WBAM_Settings::state_set('backfill_cursor', '');
+            try { WBAM_Warehouse::backfill_costs($days + 1); } catch (Throwable $e) {}
+        }
+        return [
+            'pulled' => $pulled,
+            'done'   => $done,
+            'from'   => $cursor->format('Y-m-d H:i'),
+            'to'     => $first_to,
+        ];
+    }
+
     /* ---------------- retry queue ---------------- */
 
     public static function queue(string $task, array $payload, string $error = '', int $delay_min = 10): void {

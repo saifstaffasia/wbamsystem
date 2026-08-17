@@ -95,9 +95,9 @@ class WBAM_Admin {
             <label>Purchase price (£) <input id="wi-price" type="number" step="0.01" min="0" required></label>
             <label>Source
               <select id="wi-source">
-                <option value="buyback">Buy-in (walk-in)</option>
+                <option value="buyback">Buy-in (Cash sale from private seller)</option>
                 <option value="tradein">Trade-in (against a sale)</option>
-                <option value="supplier">Supplier</option>
+                <option value="supplier">Supplier Stock</option>
               </select>
             </label>
             <label>Paid by
@@ -601,8 +601,12 @@ class WBAM_Admin {
                         echo '<div class="notice notice-success"><p>Webhooks — added: ' . esc_html(implode(', ', $r['registered']) ?: 'none') . '; already present: ' . esc_html(implode(', ', $r['already']) ?: 'none') . '.</p></div>';
                         break;
                     case 'backfill':
-                        $n = WBAM_Sync::backfill(59);
-                        echo '<div class="notice notice-success"><p>Backfilled ' . (int) $n . ' orders (last 59 days).</p></div>';
+                        $r = WBAM_Sync::backfill_step(59);
+                        if ($r['done']) {
+                            echo '<div class="notice notice-success"><p>Backfill complete — ' . (int) $r['pulled'] . ' orders this pass. All of the last 59 days are refreshed.</p></div>';
+                        } else {
+                            echo '<div class="notice notice-warning"><p>Backfilled ' . (int) $r['pulled'] . ' orders (' . esc_html($r['from']) . ' → ' . esc_html($r['to']) . '). <b>Not finished — click “Backfill 59 days” again to continue.</b></p></div>';
+                        }
                         break;
                     case 'staff':
                         global $wpdb;

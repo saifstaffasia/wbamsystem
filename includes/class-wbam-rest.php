@@ -55,6 +55,16 @@ class WBAM_Rest {
             'permission_callback' => fn() => current_user_can('wbam_reports'),
         ]);
 
+        // Resumable history backfill (managers). Call repeatedly until done:true.
+        register_rest_route('wbam/v1', '/backfill', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                try { return rest_ensure_response(WBAM_Sync::backfill_step(min(59, max(1, (int) ($r['days'] ?: 59))))); }
+                catch (Throwable $e) { return new WP_Error('wbam_sync', $e->getMessage(), ['status' => 500]); }
+            },
+            'permission_callback' => fn() => current_user_can('wbam_manage'),
+        ]);
+
         register_rest_route('wbam/v1', '/unit/(?P<id>\d+)/(?P<op>sold|return|writeoff|transfer)', [
             'methods' => 'POST',
             'callback' => [self::class, 'unit_op'],

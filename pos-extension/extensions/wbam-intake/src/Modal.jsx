@@ -190,9 +190,9 @@ function Extension() {
             <s-box>
               <s-box padding="small"><s-text-field label={source === 'tradein' ? 'Trade-in allowance £' : 'Price paid £'} value={price} onChange={grab(setPrice)} onInput={grab(setPrice)} /></s-box>
               <s-box padding="small"><s-text>Source</s-text></s-box>
-              <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${source === 'buyback' ? '✓ ' : ''}Buy-in (walk-in seller)`}</s-button></s-box>
-              <s-box padding="small"><s-button onClick={() => chooseSource('tradein')}>{`${source === 'tradein' ? '✓ ' : ''}Trade-in (against this sale)`}</s-button></s-box>
-              <s-box padding="small"><s-button onClick={() => chooseSource('supplier')}>{`${source === 'supplier' ? '✓ ' : ''}Supplier stock`}</s-button></s-box>
+              <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${source === 'buyback' ? '✓ ' : ''}Buy-in (Cash sale from private seller)`}</s-button></s-box>
+              <s-box padding="small"><s-button onClick={() => chooseSource('tradein')}>{`${source === 'tradein' ? '✓ ' : ''}Trade-in (against a sale)`}</s-button></s-box>
+              <s-box padding="small"><s-button onClick={() => chooseSource('supplier')}>{`${source === 'supplier' ? '✓ ' : ''}Supplier Stock`}</s-button></s-box>
               <s-box padding="small"><s-text>Paid by</s-text></s-box>
               <s-box padding="small"><s-button onClick={() => setPayout('cash')}>{`${payout === 'cash' ? '✓ ' : ''}Cash from till`}</s-button></s-box>
               <s-box padding="small"><s-button onClick={() => setPayout('bank')}>{`${payout === 'bank' ? '✓ ' : ''}Bank transfer`}</s-button></s-box>

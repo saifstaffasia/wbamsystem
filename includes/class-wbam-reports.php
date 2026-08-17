@@ -46,9 +46,17 @@ class WBAM_Reports {
         $base = "FROM {$p}wbam_orders o WHERE o.processed_at BETWEEN %s AND %s AND o.cancelled=0 AND o.test=0" . $locSql;
 
         $totals = $wpdb->get_row($wpdb->prepare(
-            "SELECT COUNT(*) orders_n, COALESCE(SUM(o.total),0) gross, COALESCE(SUM(o.refunded),0) refunded,
+            "SELECT COUNT(*) orders_n, COALESCE(SUM(o.total),0) gross,
                     COALESCE(SUM(o.tax),0) tax, COALESCE(SUM(o.discounts),0) discounts
              $base", $a, $b), ARRAY_A);
+
+        // Refunds are counted on the day the REFUND happened (matches Shopify's
+        // "Sales reversals"), not the day of the original order.
+        $refunded_range = (float) $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(-t.amount),0)
+             FROM {$p}wbam_tenders t JOIN {$p}wbam_orders o ON o.order_id=t.order_id
+             WHERE t.kind='refund' AND t.processed_at BETWEEN %s AND %s AND o.cancelled=0 AND o.test=0" . $locSql,
+            $a, $b));
 
         $lineagg = $wpdb->get_row($wpdb->prepare(
             "SELECT COALESCE(SUM(l.total),0) line_rev,
@@ -79,8 +87,18 @@ class WBAM_Reports {
              FROM {$p}wbam_order_lines l JOIN {$p}wbam_orders o ON o.order_id=l.order_id
              WHERE o.processed_at BETWEEN %s AND %s AND o.cancelled=0 AND o.test=0" . $locSql .
             ' GROUP BY o.user_id', $a, $b), ARRAY_A);
+        $staff_ref = $wpdb->get_results($wpdb->prepare(
+            "SELECT o.user_id, COALESCE(SUM(-t.amount),0) refunded
+             FROM {$p}wbam_tenders t JOIN {$p}wbam_orders o ON o.order_id=t.order_id
+             WHERE t.kind='refund' AND t.processed_at BETWEEN %s AND %s AND o.cancelled=0 AND o.test=0" . $locSql .
+            ' GROUP BY o.user_id', $a, $b), ARRAY_A);
+        $ref_by_user = [];
+        foreach ($staff_ref as $r) $ref_by_user[(int) $r['user_id']] = (float) $r['refunded'];
         $gp_by_user = [];
-        foreach ($staff_gp as $r) $gp_by_user[(int) $r['user_id']] = (float) $r['rev'] - (float) $r['cogs'];
+        foreach ($staff_gp as $r) {
+            $uid = (int) $r['user_id'];
+            $gp_by_user[$uid] = (float) $r['rev'] - (float) $r['cogs'] - ($ref_by_user[$uid] ?? 0.0);
+        }
         foreach ($staff as &$s) {
             $s['label'] = WBAM_Settings::staff_label((int) $s['user_id']);
             $s['gp']    = round($gp_by_user[(int) $s['user_id']] ?? 0, 2);
@@ -120,10 +138,11 @@ class WBAM_Reports {
             "SELECT COUNT(*) FROM {$p}wbam_units WHERE created_at BETWEEN %s AND %s" . $brSql, $a, $b));
 
         $gross = (float) $totals['gross'];
-        $refunded = (float) $totals['refunded'];
+        $refunded = $refunded_range;
         $cogs = (float) $lineagg['cogs'];
         $rev  = (float) $lineagg['line_rev'];
-        $gp   = $rev - $cogs;
+        $net_rev = $rev - $refunded;
+        $gp   = $rev - $refunded - $cogs;
 
         return [
             'range'   => $range, 'from' => $a, 'to' => $b, 'branch_id' => $branch_id,
@@ -136,7 +155,7 @@ class WBAM_Reports {
                 'discounts' => round((float) $totals['discounts'], 2),
                 'cogs'      => round($cogs, 2),
                 'gp'        => round($gp, 2),
-                'gp_pct'    => $rev > 0 ? round($gp / $rev * 100, 1) : null,
+                'gp_pct'    => $net_rev > 0 ? round($gp / $net_rev * 100, 1) : null,
                 'untracked_cost_lines' => (int) $lineagg['untracked'],
             ],
             'tenders' => $buckets,
@@ -165,9 +184,10 @@ class WBAM_Reports {
         ob_start(); ?>
         <div class="wbam-report">
           <div class="wbam-tiles">
-            <div class="tile"><span>Sales</span><b><?php echo $money($t['gross']); ?></b><small><?php echo (int) $t['orders']; ?> orders</small></div>
-            <div class="tile"><span>Refunds</span><b><?php echo $money($t['refunded']); ?></b><small>Net <?php echo $money($t['net']); ?></small></div>
-            <div class="tile"><span>Gross profit</span><b><?php echo $money($t['gp']); ?></b><small><?php echo $t['gp_pct'] !== null ? $t['gp_pct'] . '%' : '—'; ?><?php echo $t['untracked_cost_lines'] ? ' · ' . (int) $t['untracked_cost_lines'] . ' lines w/o cost' : ''; ?></small></div>
+            <div class="tile"><span>Sales</span><b><?php echo $money($t['gross']); ?></b><small><?php echo (int) $t['orders']; ?> order<?php echo (int) $t['orders'] === 1 ? '' : 's'; ?></small></div>
+            <div class="tile"><span>Refunds</span><b><?php echo $money($t['refunded']); ?></b><small>dated in this range</small></div>
+            <div class="tile"><span>Net sales</span><b><?php echo $money($t['net']); ?></b><small>sales − refunds</small></div>
+            <div class="tile"><span>Gross profit</span><b><?php echo $money($t['gp']); ?></b><small><?php echo $t['gp_pct'] !== null ? $t['gp_pct'] . '% of net' : '—'; ?><?php echo $t['untracked_cost_lines'] ? ' · ' . (int) $t['untracked_cost_lines'] . ' lines w/o cost' : ''; ?></small></div>
             <div class="tile"><span>Buy-ins</span><b><?php echo $money($r['buyback']['spend']); ?></b><small><?php echo (int) $r['buyback']['intake_units']; ?> device(s) · cash <?php echo $money($r['buyback']['cash']); ?></small></div>
             <div class="tile"><span>Repairs revenue</span><b><?php echo $money($r['repairs']['revenue']); ?></b><small>parts <?php echo $money($r['repairs']['parts_cost']); ?></small></div>
           </div>
@@ -207,7 +227,7 @@ class WBAM_Reports {
               </tbody></table>
             </div>
           </div>
-          <p class="wbam-foot">Generated <?php echo esc_html($r['generated_at']); ?> · figures include VAT where prices do · GP = line revenue − recorded costs (operational, not a VAT margin-scheme calculation).</p>
+          <p class="wbam-foot">Generated <?php echo esc_html($r['generated_at']); ?> · figures include VAT where prices do · refunds count on the day the refund was made (matches Shopify) · GP = line revenue − refunds − recorded costs (operational, not a VAT margin-scheme calculation).</p>
         </div>
         <?php return (string) ob_get_clean();
     }
