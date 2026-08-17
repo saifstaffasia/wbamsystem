@@ -49,12 +49,12 @@ class WBAM_Catalog {
      */
     public static function create_custom_product(string $title, string $grade, float $sell, float $cost, string $barcode, int $location_id): array {
         $m = 'mutation($input: ProductSetInput!) {
-            productSet(input: $input, synchronous: true) {
+            productSet(input: $input, synchronous: true)%IDEM% {
                 product { id variants(first: 1) { nodes { id inventoryItem { id } } } }
                 userErrors { field message }
             }
         }';
-        $res = WBAM_Shopify::i()->graphql($m, ['input' => [
+        $res = self::run_idem($m, ['input' => [
             'title'          => $title,
             'status'         => 'ACTIVE',
             'productType'    => 'Phone',
@@ -107,9 +107,9 @@ class WBAM_Catalog {
             }
         }
         if (!$pub) throw new RuntimeException('POS publication not found.');
-        $res = WBAM_Shopify::i()->graphql(
+        $res = self::run_idem(
             'mutation($id: ID!, $input: [PublicationInput!]!) {
-                publishablePublish(id: $id, input: $input) { userErrors { field message } }
+                publishablePublish(id: $id, input: $input)%IDEM% { userErrors { field message } }
             }',
             ['id' => $product_gid, 'input' => [['publicationId' => $pub]]]
         );
@@ -209,6 +209,21 @@ class WBAM_Catalog {
     }
 
     /**
+     * Run a mutation; if the API demands the @idempotent directive (2026-07
+     * requires it on inventory-write mutations), retry once with a fresh key.
+     * $tpl contains %IDEM% right after the mutation field call site.
+     */
+    private static function run_idem(string $tpl, array $vars): array {
+        try {
+            return WBAM_Shopify::i()->graphql(str_replace('%IDEM%', '', $tpl), $vars);
+        } catch (RuntimeException $e) {
+            if (stripos($e->getMessage(), 'idempotent') === false) throw $e;
+            $with = str_replace('%IDEM%', ' @idempotent(key: "' . wp_generate_uuid4() . '")', $tpl);
+            return WBAM_Shopify::i()->graphql($with, $vars);
+        }
+    }
+
+    /**
      * Adjust pooled available quantity at a location.
      * Implemented as read-current → set(current+delta) with compareQuantity as an
      * optimistic lock (inventoryAdjustQuantities on 'available' now demands
@@ -231,9 +246,9 @@ class WBAM_Catalog {
 
             if ($level === null) {
                 // Not stocked at this location yet (e.g. a new branch) — activate with the target qty.
-                $res2 = WBAM_Shopify::i()->graphql(
+                $res2 = self::run_idem(
                     'mutation($item: ID!, $loc: ID!, $available: Int) {
-                        inventoryActivate(inventoryItemId: $item, locationId: $loc, available: $available) { userErrors { field message } }
+                        inventoryActivate(inventoryItemId: $item, locationId: $loc, available: $available)%IDEM% { userErrors { field message } }
                     }',
                     ['item' => $itemGid, 'loc' => $locGid, 'available' => max($delta, 0)]
                 );
@@ -243,10 +258,10 @@ class WBAM_Catalog {
             }
 
             $current = (int) ($level['quantities'][0]['quantity'] ?? 0);
-            // 2026-07 shape: adjust with changeFromQuantity = built-in compare-and-swap.
+            // 2026-07 shape: adjust with changeFromQuantity (compare-and-swap) + required @idempotent key.
             $res3 = WBAM_Shopify::i()->graphql(
                 'mutation($input: InventoryAdjustQuantitiesInput!) {
-                    inventoryAdjustQuantities(input: $input) { userErrors { field message } }
+                    inventoryAdjustQuantities(input: $input) @idempotent(key: "' . wp_generate_uuid4() . '") { userErrors { field message } }
                 }',
                 ['input' => [
                     'name'    => 'available',
@@ -275,14 +290,14 @@ class WBAM_Catalog {
         // $quantities: [ ['inventory_item_id'=>..,'location_id'=>..,'quantity'=>..], ... ]
         if (!$quantities) return;
         $m = 'mutation($input: InventorySetQuantitiesInput!) {
-            inventorySetQuantities(input: $input) { userErrors { field message } }
+            inventorySetQuantities(input: $input)%IDEM% { userErrors { field message } }
         }';
         $items = array_map(fn($r) => [
             'inventoryItemId' => WBAM_Shopify::gid('InventoryItem', $r['inventory_item_id']),
             'locationId'      => WBAM_Shopify::gid('Location', $r['location_id']),
             'quantity'        => (int) $r['quantity'],
         ], $quantities);
-        $res = WBAM_Shopify::i()->graphql($m, ['input' => [
+        $res = self::run_idem($m, ['input' => [
             'name' => 'available', 'reason' => 'correction',
             'quantities' => $items,
         ]]);

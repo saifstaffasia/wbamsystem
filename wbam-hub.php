@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WBAM Hub
  * Description: WeBuyAnyMobile operations hub — used-device intake & IMEI registry, label printing, repair tickets, parts & vendor POs, and live sales/profit reporting on top of Shopify.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Author: Staff Asia
  * Text Domain: wbam-hub
  * Requires PHP: 8.0
@@ -10,7 +10,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('WBAM_VER', '0.3.2');
+define('WBAM_VER', '0.3.3');
 define('WBAM_FILE', __FILE__);
 define('WBAM_DIR', plugin_dir_path(__FILE__));
 define('WBAM_URL', plugin_dir_url(__FILE__));
