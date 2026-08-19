@@ -123,6 +123,7 @@
       </div>
       <h3>Purchase</h3><div class="wa-grid">
         <label id="in-price-l">Price paid £ *<input id="in-price" type="number" step="0.01"></label>
+        <label>Selling price £ (optional — sets the shelf price)<input id="in-sell" type="number" step="0.01"></label>
         <label>Source<select id="in-source"><option value="buyback">Buy-in (Cash sale from private seller)</option><option value="tradein">Trade-in (against a sale)</option><option value="supplier">Supplier Stock</option></select></label>
         <label>Paid by<select id="in-payout"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="store_credit">Trade-in value / store credit</option></select></label>
         <label>Battery %<input id="in-batt" type="number" min="0" max="100"></label>
@@ -205,6 +206,7 @@
       const body = { imei: val('#in-imei'), branch_id: +val('#in-branch'), purchase_price: parseFloat(val('#in-price') || '0'),
         source: val('#in-source'), payout_method: val('#in-payout'), battery_health: val('#in-batt'), checkmend_ref: val('#in-cm'),
         notes: val('#in-notes'), seller };
+      if (val('#in-sell') && parseFloat(val('#in-sell')) > 0) body.price_override = parseFloat(val('#in-sell'));
       if (val('#in-payout') === 'bank') {
         body.bank = { account_name: val('#bk-name'), sort_code: val('#bk-sort'), account_number: val('#bk-acct'), reference: val('#bk-ref') };
       }
@@ -226,7 +228,7 @@
           <p class="wa-row"><a class="wa-btn a" target="_blank" href="${r.unit.label_url}">🏷 Print label</a>
           <a class="wa-btn" target="_blank" href="${r.unit.declaration_url}">📄 Seller declaration</a></p>`;
         window.open(r.unit.label_url, '_blank');
-        ['#in-imei', '#in-price', '#in-batt', '#in-cm', '#in-notes', '#ex-imei2', '#ex-serial', '#ex-acc', '#ex-faults'].forEach((s) => { q(s).value = ''; });
+        ['#in-imei', '#in-price', '#in-sell', '#in-batt', '#in-cm', '#in-notes', '#ex-imei2', '#ex-serial', '#ex-acc', '#ex-faults'].forEach((s) => { const el = q(s); if (el) el.value = ''; });
         sellerBox.querySelectorAll('input,select').forEach((el) => { el.value = ''; });
         q('#in-imei').focus();
       } catch (er) { msg.textContent = '⚠ ' + er.message; }

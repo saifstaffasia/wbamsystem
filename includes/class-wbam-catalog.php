@@ -18,13 +18,14 @@ class WBAM_Catalog {
                 }
             }
         }';
-        // No product_type filter: WBAM serializes phones, MacBooks, tablets, consoles…
-        // Staff pick from titles, so accessory near-misses are harmless.
+        // Devices only — no cases, cables or screen protectors in the pickers.
+        // (Types were normalised store-wide 19 Aug 2026: phones=Phone, etc.)
         // Split words into ANDed title clauses so "iphone 16 pro" matches
         // "iPhone 16 Pro (Max)" only — not every product containing "iphone".
+        $devices = '(product_type:Phone OR product_type:Laptop OR product_type:Tablet OR product_type:Smartwatch) AND status:active';
         $words = preg_split('/\s+/', trim(str_replace('"', '', $term))) ?: [];
         $clauses = array_map(fn($w) => 'title:*' . $w . '*', array_filter($words));
-        $search = $clauses ? implode(' AND ', $clauses) : 'title:*';
+        $search = $devices . ($clauses ? ' AND ' . implode(' AND ', $clauses) : '');
         $res = WBAM_Shopify::i()->graphql($q, ['q' => $search]);
         $out = [];
         foreach (($res['data']['products']['nodes'] ?? []) as $p) {
@@ -176,7 +177,25 @@ class WBAM_Catalog {
             foreach ($selected as $name => $want) {
                 if (!isset($vals[$name]) || strcasecmp(trim($vals[$name]), trim($want)) !== 0) { $match = false; break; }
             }
-            if ($match) return self::variant_out($v);
+            if ($match) {
+                // Staff gave a selling price — it wins over the current shelf price.
+                if ($price !== null && abs((float) $v['price'] - $price) >= 0.01) {
+                    $upd = WBAM_Shopify::i()->graphql(
+                        'mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+                            productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+                                userErrors { field message }
+                            }
+                        }',
+                        ['productId' => $gid, 'variants' => [[
+                            'id'    => $v['id'],
+                            'price' => number_format($price, 2, '.', ''),
+                        ]]]
+                    );
+                    $uerrs = $upd['data']['productVariantsBulkUpdate']['userErrors'] ?? [];
+                    if (!$uerrs) $v['price'] = number_format($price, 2, '.', '');
+                }
+                return self::variant_out($v);
+            }
         }
 
         // Not found — create it (creates missing option values too).
@@ -212,6 +231,134 @@ class WBAM_Catalog {
             'price'             => (float) ($v['price'] ?? 0),
             'title'             => (string) ($v['title'] ?? ''),
         ];
+    }
+
+    /**
+     * Import the bundled Samsung catalog (data/samsung-catalog.json — CEX-based
+     * pricing) in a ~30s budget per call; keeps a cursor, click again to
+     * continue. Existing titles are skipped, so it is safe to re-run.
+     * Returns ['done'=>bool,'created'=>[titles],'skipped'=>n,'at'=>i,'total'=>n].
+     */
+    public static function seed_samsung(int $budget_s = 30): array {
+        $file = WBAM_DIR . 'data/samsung-catalog.json';
+        if (!is_readable($file)) throw new RuntimeException('samsung-catalog.json missing from the plugin.');
+        $rows = json_decode((string) file_get_contents($file), true);
+        if (!is_array($rows) || !$rows) throw new RuntimeException('samsung-catalog.json unreadable.');
+
+        $i = (int) WBAM_Settings::state_get('samsung_seed_at', 0);
+        $t0 = time();
+        $created = [];
+        $skipped = 0;
+        $grades = ['Used (A - Excellent)', 'Used (B - Very Good)', 'Used (C - Good)'];
+        $glet   = ['Used (A - Excellent)' => 'A', 'Used (B - Very Good)' => 'B', 'Used (C - Good)' => 'C'];
+
+        for (; $i < count($rows) && (time() - $t0) < $budget_s; $i++) {
+            $row = $rows[$i];
+            $title = (string) $row['title'];
+            // Idempotent: skip if a product with this exact title already exists.
+            $q = WBAM_Shopify::i()->graphql(
+                'query($q: String!) { products(first: 1, query: $q) { nodes { title } } }',
+                ['q' => 'title:"' . addslashes($title) . '"']
+            );
+            $hit = $q['data']['products']['nodes'][0]['title'] ?? '';
+            if (strcasecmp($hit, $title) === 0) { $skipped++; WBAM_Settings::state_set('samsung_seed_at', $i + 1); continue; }
+
+            $storages = array_keys((array) $row['prices']);
+            $codes = [];
+            $used  = [];
+            foreach ((array) $row['colours'] as $col) {
+                $base = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', str_replace(' ', '', $col)), 0, 3));
+                $code = $base;
+                $n = 2;
+                while (in_array($code, $used, true)) $code = $base . $n++;
+                $used[] = $code;
+                $codes[$col] = $code;
+            }
+            $variants = [];
+            foreach ((array) $row['colours'] as $col) {
+                foreach ($storages as $st) {
+                    foreach ($grades as $gr) {
+                        $variants[] = [
+                            'optionValues' => [
+                                ['optionName' => 'Colour', 'name' => $col],
+                                ['optionName' => 'Storage', 'name' => $st],
+                                ['optionName' => 'Condition', 'name' => $gr],
+                            ],
+                            'price' => number_format((float) $row['prices'][$st][$gr], 2, '.', ''),
+                            'sku'   => 'SAM-' . str_replace(' ', '', str_replace('Samsung Galaxy ', '', $title))
+                                     . '-' . str_replace(['GB', 'TB'], ['', 'T'], $st) . '-' . $codes[$col] . '-' . $glet[$gr],
+                            'taxable'       => true,
+                            'inventoryItem' => ['tracked' => true],
+                        ];
+                    }
+                }
+            }
+            $input = [
+                'title'          => $title,
+                'status'         => 'ACTIVE',
+                'productType'    => 'Phone',
+                'vendor'         => 'Samsung',
+                'category'       => 'gid://shopify/TaxonomyCategory/el-4-8-5-2', // Smart Phones
+                'tags'           => ['Samsung', 'Phones'],
+                'productOptions' => [
+                    ['name' => 'Colour', 'values' => array_map(fn($c) => ['name' => $c], (array) $row['colours'])],
+                    ['name' => 'Storage', 'values' => array_map(fn($s) => ['name' => $s], $storages)],
+                    ['name' => 'Condition', 'values' => array_map(fn($g) => ['name' => $g], $grades)],
+                ],
+                'variants' => $variants,
+            ];
+            $res = self::run_idem(
+                'mutation($input: ProductSetInput!) { productSet(input: $input, synchronous: true)%IDEM% {
+                    product { id options { id name } } userErrors { field message } } }',
+                ['input' => $input]
+            );
+            $errs = $res['data']['productSet']['userErrors'] ?? [];
+            if ($errs) throw new RuntimeException($title . ': ' . wp_json_encode($errs));
+            $gid = (string) ($res['data']['productSet']['product']['id'] ?? '');
+            if ($gid) {
+                try { self::publish_to_pos($gid); } catch (Throwable $e) {}
+                try { self::publish_to_online($gid); } catch (Throwable $e) {}
+                // "New" sells at a staff-set price, so it exists as a pickable
+                // condition with no pre-made variants.
+                foreach (($res['data']['productSet']['product']['options'] ?? []) as $opt) {
+                    if (strcasecmp((string) $opt['name'], 'Condition') !== 0) continue;
+                    try {
+                        self::run_idem(
+                            'mutation($pid: ID!, $opt: ID!) { productOptionUpdate(productId: $pid, option: {id: $opt}, optionValuesToAdd: [{name: "New"}])%IDEM% { userErrors { field message } } }',
+                            ['pid' => $gid, 'opt' => $opt['id']]
+                        );
+                    } catch (Throwable $e) {}
+                    break;
+                }
+            }
+            $created[] = $title;
+            WBAM_Settings::state_set('samsung_seed_at', $i + 1);
+        }
+        $done = $i >= count($rows);
+        if ($done) WBAM_Settings::state_set('samsung_seed_at', 0);
+        return ['done' => $done, 'created' => $created, 'skipped' => $skipped, 'at' => $i, 'total' => count($rows)];
+    }
+
+    /** Publish a product to the Online Store channel (publication id cached). */
+    public static function publish_to_online(string $product_gid): void {
+        $pub = WBAM_Settings::state_get('online_publication_id');
+        if (!$pub) {
+            $res = WBAM_Shopify::i()->graphql('query { publications(first: 20) { nodes { id catalog { title } } } }');
+            foreach (($res['data']['publications']['nodes'] ?? []) as $n) {
+                if (stripos((string) ($n['catalog']['title'] ?? ''), 'online store') !== false) {
+                    $pub = $n['id'];
+                    WBAM_Settings::state_set('online_publication_id', $pub);
+                    break;
+                }
+            }
+        }
+        if (!$pub) return; // no online store channel — POS-only shops
+        $res = self::run_idem(
+            'mutation($id: ID!, $input: [PublicationInput!]!) {
+                publishablePublish(id: $id, input: $input)%IDEM% { userErrors { field message } }
+            }',
+            ['id' => $product_gid, 'input' => [['publicationId' => $pub]]]
+        );
     }
 
     /** EAN-13 check digit for a 12-digit payload. */

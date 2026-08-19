@@ -631,6 +631,17 @@ class WBAM_Admin {
                            . '; already present: ' . esc_html(implode(', ', $r['already']) ?: 'none')
                            . (!empty($r['pruned']) ? '; pruned old-domain hooks: ' . esc_html(implode(', ', $r['pruned'])) : '') . '.</p></div>';
                         break;
+                    case 'seedsamsung':
+                        $r = WBAM_Catalog::seed_samsung(30);
+                        $msg = ($r['created'] ? 'Created: ' . esc_html(implode(', ', $r['created'])) . '. ' : '')
+                             . ($r['skipped'] ? (int) $r['skipped'] . ' already existed. ' : '')
+                             . (int) $r['at'] . ' of ' . (int) $r['total'] . ' processed.';
+                        if ($r['done']) {
+                            echo '<div class="notice notice-success"><p>Samsung catalog import complete. ' . $msg . '</p></div>';
+                        } else {
+                            echo '<div class="notice notice-warning"><p>' . $msg . ' <b>Not finished — click “Import Samsung catalog” again to continue.</b></p></div>';
+                        }
+                        break;
                     case 'backfill':
                         $r = WBAM_Sync::backfill_step(59);
                         if ($r['done']) {
@@ -668,7 +679,8 @@ class WBAM_Admin {
            . '<button class="button" name="wbam_saction" value="test">Test connection</button> '
            . '<button class="button" name="wbam_saction" value="branches">Sync locations → branches</button> '
            . '<button class="button" name="wbam_saction" value="webhooks">Register webhooks</button> '
-           . '<button class="button" name="wbam_saction" value="backfill" onclick="return confirm(\'Pull the last 59 days of orders?\')">Backfill 59 days</button></p></form>';
+           . '<button class="button" name="wbam_saction" value="backfill" onclick="return confirm(\'Pull the last 59 days of orders?\')">Backfill 59 days</button> '
+           . '<button class="button" name="wbam_saction" value="seedsamsung" onclick="return confirm(\'Import the Samsung Galaxy S / Z Flip / Z Fold catalog (CEX-based prices)? Runs in ~30s passes — click again until it says complete.\')">Import Samsung catalog</button></p></form>';
 
         echo '<h2>Branches</h2><table class="widefat striped" style="max-width:560px"><thead><tr><th>Branch</th><th>Shopify location</th><th>Active</th></tr></thead><tbody>';
         foreach (WBAM_Settings::branches(false) as $b) {

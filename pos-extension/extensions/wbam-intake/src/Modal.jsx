@@ -28,6 +28,7 @@ function Extension() {
   const [cSell, setCSell] = useState('');
 
   const [price, setPrice] = useState('');
+  const [sellPrice, setSellPrice] = useState('');
   const [source, setSource] = useState('buyback');
   const [payout, setPayout] = useState('cash');
   const [battery, setBattery] = useState('');
@@ -122,6 +123,7 @@ function Extension() {
       };
       if (payout === 'bank') body.bank = { account_name: bkName, sort_code: bkSort, account_number: bkAcct };
       if (source === 'supplier' && supplier.trim()) body.source_ref = supplier.trim();
+      if (!custom && sellPrice !== '' && parseFloat(sellPrice) > 0) body.price_override = parseFloat(sellPrice);
       if (custom) Object.assign(body, { custom: 1, title: cTitle.trim(), grade: cGrade, sell_price: parseFloat(cSell) });
       else Object.assign(body, { product_id: product.product_id, model_title: product.title, selected: sel });
 
@@ -140,7 +142,7 @@ function Extension() {
       }
       setImei(''); setSearch(''); setModels([]); setProduct(null); setSel({});
       setCustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
-      setPrice(''); setSource('buyback'); setPayout('cash'); setBattery('');
+      setPrice(''); setSellPrice(''); setSource('buyback'); setPayout('cash'); setBattery('');
       setBkName(''); setBkSort(''); setBkAcct(''); setSupplier('');
       setSName(''); setSMobile(''); setSDob(''); setSAddr(''); setSPostcode(''); setSEmail(''); setSIdType(''); setSIdRef('');
     } catch (e) {
@@ -210,6 +212,9 @@ function Extension() {
           {(product || custom) ? (
             <s-box>
               <s-box padding="small"><s-text-field label={source === 'tradein' ? 'Trade-in allowance £' : 'Price paid £'} value={price} onChange={grab(setPrice)} onInput={grab(setPrice)} /></s-box>
+              {!custom ? (
+                <s-box padding="small"><s-text-field label="Selling price £ (optional — sets the shelf price)" value={sellPrice} onChange={grab(setSellPrice)} onInput={grab(setSellPrice)} /></s-box>
+              ) : null}
               <s-box padding="small"><s-text>Source</s-text></s-box>
               <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${source === 'buyback' ? '✓ ' : ''}Buy-in (Cash sale from private seller)`}</s-button></s-box>
               <s-box padding="small"><s-button onClick={() => chooseSource('tradein')}>{`${source === 'tradein' ? '✓ ' : ''}Trade-in (against a sale)`}</s-button></s-box>
