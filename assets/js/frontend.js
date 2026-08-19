@@ -9,9 +9,21 @@
   const money = (v) => '£' + Number(v || 0).toFixed(2);
 
   const api = async (path, opts = {}) => {
-    const o = { headers: { 'X-WP-Nonce': A.nonce, 'Content-Type': 'application/json' }, ...opts };
-    const r = await fetch(A.rest + path, o);
-    const j = await r.json().catch(() => ({}));
+    const ctl = new AbortController();
+    const kill = setTimeout(() => ctl.abort(), 20000);
+    let r, j;
+    try {
+      r = await fetch(A.rest + path, { headers: { 'X-WP-Nonce': A.nonce, 'Content-Type': 'application/json' }, ...opts, signal: ctl.signal });
+      j = await r.json().catch(() => ({}));
+    } catch (e) {
+      throw new Error(ctl.signal.aborted ? 'No response — try again.' : 'Connection problem — try again.');
+    } finally {
+      clearTimeout(kill);
+    }
+    if (r.status === 403 && j && (j.code === 'rest_cookie_invalid_nonce' || j.code === 'rest_forbidden_nonce')) {
+      location.reload(); // session key expired — a reload picks up a fresh one
+      throw new Error('Session refreshed — try again in a second.');
+    }
     if (!r.ok) throw new Error(j.message || 'Request failed');
     return j;
   };
@@ -73,7 +85,7 @@
   }
 
   /* ---------- intake ---------- */
-  const I = { product: null, sel: {}, custom: false, timer: null };
+  const I = { product: null, sel: {}, custom: false, timer: null, seq: 0 };
   function sellerFields(req) {
     return `<h3>Seller details${req ? '' : ' (optional)'}</h3><div class="wa-grid">
       <label>Full legal name${req ? ' *' : ''}<input id="se-name"></label>
@@ -154,11 +166,15 @@
       const v = e.target.value.trim();
       if (v.length < 2) return;
       I.timer = setTimeout(async () => {
+        const mine = ++I.seq;
         try {
           const models = await api('models?term=' + encodeURIComponent(v));
+          if (mine !== I.seq || !q('#in-models')) return; // stale response or view changed
           q('#in-models').innerHTML = models.map((mo, i) => `<button data-i="${i}">${esc(mo.title)}</button>`).join('');
           q('#in-models')._models = models;
-        } catch (er) {}
+        } catch (er) {
+          if (mine === I.seq) toast('Model search failed — type again. ' + er.message, 1);
+        }
       }, 350);
     };
     q('#in-models').onclick = (e) => {

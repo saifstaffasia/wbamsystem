@@ -15,6 +15,7 @@ class WBAM_Warehouse {
 
         $user_id = (int) ($o['user_id'] ?? 0);
         WBAM_Settings::touch_staff($user_id);
+        WBAM_Settings::auto_label_staff($user_id, $order_id);
 
         $customer = '';
         if (!empty($o['customer'])) {

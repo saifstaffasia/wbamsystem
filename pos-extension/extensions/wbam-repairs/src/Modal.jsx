@@ -46,11 +46,21 @@ function Extension() {
 
   const call = async (path, opts = {}) => {
     const token = await shopify.session.getSessionToken();
-    const res = await fetch(`${HUB}/wp-json/wbam/v1/pos/${path}`, {
-      ...opts,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
-    });
-    const json = await res.json();
+    const ctl = new AbortController();
+    const kill = setTimeout(() => ctl.abort(), 15000);
+    let res, json;
+    try {
+      res = await fetch(`${HUB}/wp-json/wbam/v1/pos/${path}`, {
+        ...opts,
+        signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(opts.headers || {}) },
+      });
+      json = await res.json();
+    } catch (e) {
+      throw new Error(ctl.signal.aborted ? 'No response from the Hub — try again.' : 'Connection problem — try again.');
+    } finally {
+      clearTimeout(kill);
+    }
     if (!res.ok) throw new Error((json && json.message) || `HTTP ${res.status}`);
     return json;
   };

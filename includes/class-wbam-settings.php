@@ -130,6 +130,32 @@ class WBAM_Settings {
         ));
     }
 
+    /**
+     * Fill an empty staff label from the order's timeline ("Jane Doe processed
+     * this order on Shopify POS.") — works on every plan, no read_users scope.
+     * Manual edits in Settings always win: only blank labels are filled.
+     */
+    public static function auto_label_staff(int $user_id, int $order_id): void {
+        global $wpdb;
+        if (!$user_id || !$order_id) return;
+        $label = $wpdb->get_var($wpdb->prepare(
+            "SELECT label FROM {$wpdb->prefix}wbam_staff_map WHERE user_id=%d", $user_id
+        ));
+        if ($label === null || $label !== '') return;
+        try {
+            [$data] = WBAM_Shopify::i()->rest('GET', "/orders/{$order_id}/events.json?limit=50");
+            foreach ((array) ($data['events'] ?? []) as $ev) {
+                $msg = wp_strip_all_tags((string) ($ev['message'] ?? ''));
+                if (!preg_match('/^(.{2,60}?) (?:processed|placed) this order/i', $msg, $m)) continue;
+                $name = trim($m[1]);
+                if ($name === '' || strcasecmp($name, 'You') === 0 || stripos($name, 'Shopify') !== false) return;
+                $wpdb->update("{$wpdb->prefix}wbam_staff_map",
+                    ['label' => sanitize_text_field($name)], ['user_id' => $user_id]);
+                return;
+            }
+        } catch (Throwable $e) {} // cosmetic — never block order ingest
+    }
+
     /* ---------------- sync state ---------------- */
 
     public static function state_get(string $k, $fallback = null) {
