@@ -32,6 +32,13 @@ class WBAM_Rest {
             'permission_callback' => fn() => current_user_can('wbam_use'),
         ]);
 
+        // Current shelf price of one variant (for prefilling the intake's Selling price box).
+        register_rest_route('wbam/v1', '/price', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'variant_price'],
+            'permission_callback' => fn() => current_user_can('wbam_use'),
+        ]);
+
         register_rest_route('wbam/v1', '/intake', [
             'methods' => 'POST',
             'callback' => [self::class, 'intake'],
@@ -91,6 +98,11 @@ class WBAM_Rest {
         register_rest_route('wbam/v1', '/pos/models', [
             'methods' => 'GET',
             'callback' => fn(WP_REST_Request $r) => rest_ensure_response(WBAM_Catalog::search_models((string) $r['term'])),
+            'permission_callback' => [self::class, 'pos_auth'],
+        ]);
+        register_rest_route('wbam/v1', '/pos/price', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'variant_price'],
             'permission_callback' => [self::class, 'pos_auth'],
         ]);
         register_rest_route('wbam/v1', '/pos/intake', [
@@ -292,6 +304,17 @@ class WBAM_Rest {
             return rest_ensure_response(['ok' => true, 'id' => (int) $t['id'], 'ticket' => $t['ticket_code']]);
         } catch (Throwable $e) {
             return new WP_Error('wbam_pos', $e->getMessage(), ['status' => 400]);
+        }
+    }
+
+    /** Current shelf price of the variant matching the picked options (null if it doesn't exist yet). */
+    public static function variant_price(WP_REST_Request $r) {
+        try {
+            $selected = json_decode((string) $r['selected'], true);
+            if (!is_array($selected)) $selected = [];
+            return rest_ensure_response(WBAM_Catalog::peek_variant((int) $r['product_id'], $selected));
+        } catch (Throwable $e) {
+            return new WP_Error('wbam_price', $e->getMessage(), ['status' => 400]);
         }
     }
 

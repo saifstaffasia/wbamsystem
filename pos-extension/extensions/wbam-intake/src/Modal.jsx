@@ -1,5 +1,5 @@
 import {render} from 'preact';
-import {useState, useRef} from 'preact/hooks';
+import {useState, useRef, useEffect} from 'preact/hooks';
 
 // Interim host (WP Engine) — switch to https://system.webuyanymobile.com and redeploy.
 const HUB = 'https://system.webuyanymobile.com';
@@ -95,6 +95,20 @@ function Extension() {
   };
   const chooseSource = (s) => { setSource(s); if (s === 'tradein') setPayout('store_credit'); };
   const optionsComplete = () => product && Object.keys(product.options || {}).every((n) => sel[n]);
+
+  // Every option picked → prefill Selling price with the current shelf price.
+  const priceSeq = useRef(0);
+  useEffect(() => {
+    if (custom || !product || !optionsComplete()) return;
+    const mine = ++priceSeq.current;
+    (async () => {
+      try {
+        const r = await call(`price?product_id=${product.product_id}&selected=${encodeURIComponent(JSON.stringify(sel))}`);
+        if (mine !== priceSeq.current) return;
+        setSellPrice(r && r.price != null ? String(r.price) : '');
+      } catch (e) {}
+    })();
+  }, [product, sel, custom]);
 
   const submit = async () => {
     if (custom) {
@@ -213,7 +227,7 @@ function Extension() {
             <s-box>
               <s-box padding="small"><s-text-field label={source === 'tradein' ? 'Trade-in allowance £' : 'Price paid £'} value={price} onChange={grab(setPrice)} onInput={grab(setPrice)} /></s-box>
               {!custom ? (
-                <s-box padding="small"><s-text-field label="Selling price £ (optional — sets the shelf price)" value={sellPrice} onChange={grab(setSellPrice)} onInput={grab(setSellPrice)} /></s-box>
+                <s-box padding="small"><s-text-field label="Selling price £ (current — edit to change)" value={sellPrice} onChange={grab(setSellPrice)} onInput={grab(setSellPrice)} /></s-box>
               ) : null}
               <s-box padding="small"><s-text>Source</s-text></s-box>
               <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${source === 'buyback' ? '✓ ' : ''}Buy-in (Cash sale from private seller)`}</s-button></s-box>

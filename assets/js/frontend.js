@@ -85,7 +85,7 @@
   }
 
   /* ---------- intake ---------- */
-  const I = { product: null, sel: {}, custom: false, timer: null, seq: 0 };
+  const I = { product: null, sel: {}, custom: false, timer: null, seq: 0, pseq: 0 };
   function sellerFields(req) {
     return `<h3>Seller details${req ? '' : ' (optional)'}</h3><div class="wa-grid">
       <label>Full legal name${req ? ' *' : ''}<input id="se-name"></label>
@@ -123,7 +123,7 @@
       </div>
       <h3>Purchase</h3><div class="wa-grid">
         <label id="in-price-l">Price paid £ *<input id="in-price" type="number" step="0.01"></label>
-        <label>Selling price £ (optional — sets the shelf price)<input id="in-sell" type="number" step="0.01"></label>
+        <label>Selling price £ (current — edit to change)<input id="in-sell" type="number" step="0.01"></label>
         <label>Source<select id="in-source"><option value="buyback">Buy-in (Cash sale from private seller)</option><option value="tradein">Trade-in (against a sale)</option><option value="supplier">Supplier Stock</option></select></label>
         <label>Paid by<select id="in-payout"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="store_credit">Trade-in value / store credit</option></select></label>
         <label>Battery %<input id="in-batt" type="number" min="0" max="100"></label>
@@ -178,17 +178,31 @@
         }
       }, 350);
     };
+    // Every option picked → prefill Selling price with the current shelf price.
+    const syncPrice = async () => {
+      if (!I.product || !Object.keys(I.product.options).every((n) => I.sel[n])) return;
+      const mine = ++I.pseq;
+      try {
+        const r = await api('price?product_id=' + I.product.product_id + '&selected=' + encodeURIComponent(JSON.stringify(I.sel)));
+        if (mine !== I.pseq) return;
+        const el = q('#in-sell');
+        if (el) el.value = r && r.price != null ? r.price : '';
+      } catch (er) {}
+    };
     q('#in-models').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
       I.product = q('#in-models')._models[+b.dataset.i]; I.sel = {};
+      const el = q('#in-sell'); if (el) el.value = '';
       q('#in-models').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
       q('#in-opts').innerHTML = Object.entries(I.product.options).map(([n, vals]) =>
         `<h3>${esc(n)}</h3><div class="wa-pick" data-opt="${esc(n)}">${vals.map((v) => `<button data-v="${esc(v)}">${esc(v)}</button>`).join('')}</div>`).join('');
+      syncPrice();
     };
     q('#in-opts').onclick = (e) => {
       const b = e.target.closest('button'); if (!b) return;
       const g = b.closest('.wa-pick'); I.sel[g.dataset.opt] = b.dataset.v;
       g.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      syncPrice();
     };
     q('#in-custom-btn').onclick = () => {
       I.custom = !I.custom; I.product = null; I.sel = {};

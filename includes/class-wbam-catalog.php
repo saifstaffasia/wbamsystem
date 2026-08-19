@@ -146,6 +146,31 @@ class WBAM_Catalog {
     }
 
     /**
+     * Look up (never create) the variant matching the option values — used to
+     * prefill the intake's Selling price with the current shelf price.
+     */
+    public static function peek_variant(int $product_id, array $selected): array {
+        $gid = WBAM_Shopify::gid('Product', $product_id);
+        $q = 'query($id: ID!) {
+            product(id: $id) {
+                variants(first: 250) { nodes { price title selectedOptions { name value } } }
+            }
+        }';
+        $res  = WBAM_Shopify::i()->graphql($q, ['id' => $gid]);
+        $prod = $res['data']['product'] ?? null;
+        foreach ((array) ($prod['variants']['nodes'] ?? []) as $v) {
+            $vals = [];
+            foreach ($v['selectedOptions'] as $so) $vals[$so['name']] = $so['value'];
+            $match = true;
+            foreach ($selected as $name => $want) {
+                if (!isset($vals[$name]) || strcasecmp(trim($vals[$name]), trim($want)) !== 0) { $match = false; break; }
+            }
+            if ($match) return ['exists' => true, 'price' => (float) $v['price'], 'title' => (string) $v['title']];
+        }
+        return ['exists' => false, 'price' => null, 'title' => ''];
+    }
+
+    /**
      * Find the variant matching the given option values; create it if missing.
      * $selected = ['Colour' => 'Black', 'Storage' => '128GB', 'Condition' => 'Used (A - Excellent)']
      * Returns ['variant_id','inventory_item_id','sku','barcode','price','title'].
