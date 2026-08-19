@@ -18,6 +18,26 @@ class WBAM_Install {
             self::upgrade_barcodes();
             update_option('wbam_db_ver', self::DB_VER);
         }
+        if (get_option('wbam_ver_seen') !== WBAM_VER) {
+            self::upgrade_booking_origins();
+            update_option('wbam_ver_seen', WBAM_VER, false);
+        }
+    }
+
+    /**
+     * v0.5.0: booking_origin became a comma-separated allow-list (storefront +
+     * myshopify preview domain). If an older single-value setting was saved,
+     * widen it once so theme previews can book against the Hub.
+     */
+    private static function upgrade_booking_origins(): void {
+        $saved = get_option('wbam_settings', []);
+        if (!is_array($saved) || empty($saved['booking_origin'])) return; // no saved value — new default applies
+        $cur = (string) $saved['booking_origin'];
+        if (str_contains($cur, 'myshopify.com')) return; // already widened
+        foreach (['https://www.webuyanymobile.com', 'https://sa-we-buy-any-mobile.myshopify.com'] as $a) {
+            if (!str_contains($cur, str_replace('https://', '', $a))) $cur .= ', ' . $a;
+        }
+        WBAM_Settings::update(['booking_origin' => $cur]);
     }
 
     /**

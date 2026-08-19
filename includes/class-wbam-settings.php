@@ -35,7 +35,7 @@ class WBAM_Settings {
             'twilio_sid'    => '',
             'twilio_token'  => '',
             'twilio_from'   => '',
-            'booking_origin'=> 'https://webuyanymobile.com',
+            'booking_origin'=> 'https://webuyanymobile.com, https://www.webuyanymobile.com, https://sa-we-buy-any-mobile.myshopify.com',
             'label_w_mm'    => 40,
             'label_h_mm'    => 30,
             'business_name' => 'WeBuyAnyMobile',

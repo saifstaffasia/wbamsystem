@@ -227,7 +227,7 @@ function Extension() {
             <s-box>
               <s-box padding="small"><s-text-field label={source === 'tradein' ? 'Trade-in allowance £' : 'Price paid £'} value={price} onChange={grab(setPrice)} onInput={grab(setPrice)} /></s-box>
               {!custom ? (
-                <s-box padding="small"><s-text-field label="Selling price £ (current — edit to change)" value={sellPrice} onChange={grab(setSellPrice)} onInput={grab(setSellPrice)} /></s-box>
+                <s-box padding="small"><s-text-field label="Selling price for this variant £ (current - edit to change)" value={sellPrice} onChange={grab(setSellPrice)} onInput={grab(setSellPrice)} /></s-box>
               ) : null}
               <s-box padding="small"><s-text>Source</s-text></s-box>
               <s-box padding="small"><s-button onClick={() => chooseSource('buyback')}>{`${source === 'buyback' ? '✓ ' : ''}Buy-in (Cash sale from private seller)`}</s-button></s-box>

@@ -123,7 +123,7 @@
       </div>
       <h3>Purchase</h3><div class="wa-grid">
         <label id="in-price-l">Price paid £ *<input id="in-price" type="number" step="0.01"></label>
-        <label>Selling price £ (current — edit to change)<input id="in-sell" type="number" step="0.01"></label>
+        <label>Selling price for this variant £ (current - edit to change)<input id="in-sell" type="number" step="0.01"></label>
         <label>Source<select id="in-source"><option value="buyback">Buy-in (Cash sale from private seller)</option><option value="tradein">Trade-in (against a sale)</option><option value="supplier">Supplier Stock</option></select></label>
         <label>Paid by<select id="in-payout"><option value="cash">Cash</option><option value="bank">Bank transfer</option><option value="store_credit">Trade-in value / store credit</option></select></label>
         <label>Battery %<input id="in-batt" type="number" min="0" max="100"></label>

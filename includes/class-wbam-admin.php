@@ -607,7 +607,7 @@ class WBAM_Admin {
                             'tender_map'    => is_array($map) ? $map : WBAM_Settings::get('tender_map'),
                             'email_from'    => sanitize_email($_POST['email_from']),
                             'business_phone'=> sanitize_text_field($_POST['business_phone']),
-                            'booking_origin'=> esc_url_raw($_POST['booking_origin']),
+                            'booking_origin'=> sanitize_text_field((string) $_POST['booking_origin']),
                             'sms_provider'  => sanitize_key($_POST['sms_provider']),
                             'twilio_sid'    => trim((string) $_POST['twilio_sid']),
                             'twilio_token'  => trim((string) $_POST['twilio_token']) ?: WBAM_Settings::get('twilio_token'),
@@ -671,7 +671,7 @@ class WBAM_Admin {
         echo '<tr><th>Client secret</th><td><input name="client_secret" type="password" placeholder="' . ($s['client_secret'] ? '•••••• (saved)' : '') . '" class="regular-text"></td></tr>';
         echo '<tr><th>API version</th><td><input name="api_version" value="' . esc_attr($s['api_version']) . '"></td></tr>';
         echo '<tr><th>Tender buckets</th><td><textarea name="tender_map" rows="6" class="large-text code">' . esc_textarea(wp_json_encode($s['tender_map'], JSON_PRETTY_PRINT)) . '</textarea><p class="description">gateway → report bucket. Your POS custom method arrives as gateway <code>Trade In</code>.</p></td></tr>';
-        echo '<tr><th>Booking origin</th><td><input name="booking_origin" value="' . esc_attr($s['booking_origin']) . '" class="regular-text"> <span class="description">storefront allowed to POST bookings</span></td></tr>';
+        echo '<tr><th>Booking origin</th><td><input name="booking_origin" value="' . esc_attr($s['booking_origin']) . '" class="regular-text"> <span class="description">origins allowed to POST bookings/quotes (comma-separated)</span></td></tr>';
         echo '<tr><th>Email from</th><td><input name="email_from" value="' . esc_attr($s['email_from']) . '" class="regular-text"> Phone shown in messages: <input name="business_phone" value="' . esc_attr($s['business_phone']) . '"></td></tr>';
         echo '<tr><th>SMS</th><td><select name="sms_provider"><option value="">Off (email only)</option><option value="twilio"' . selected($s['sms_provider'], 'twilio', false) . '>Twilio</option></select> SID <input name="twilio_sid" value="' . esc_attr($s['twilio_sid']) . '"> Token <input name="twilio_token" type="password" placeholder="' . ($s['twilio_token'] ? '•••' : '') . '"> From <input name="twilio_from" value="' . esc_attr($s['twilio_from']) . '" placeholder="+44…"></td></tr>';
         echo '<tr><th>Label size</th><td><input name="label_w_mm" type="number" value="' . (int) $s['label_w_mm'] . '" style="width:4em"> × <input name="label_h_mm" type="number" value="' . (int) $s['label_h_mm'] . '" style="width:4em"> mm</td></tr>';

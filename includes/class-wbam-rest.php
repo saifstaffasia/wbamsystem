@@ -26,6 +26,20 @@ class WBAM_Rest {
             'permission_callback' => '__return_true',
         ]);
 
+        // Public sell-your-phone quote (storefront valuation page). Read-only price book.
+        register_rest_route('wbam/v1', '/quote', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'quote'],
+            'permission_callback' => '__return_true',
+        ]);
+
+        // Public priced-model list (storefront typeahead). Small, cacheable.
+        register_rest_route('wbam/v1', '/devices', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'devices'],
+            'permission_callback' => '__return_true',
+        ]);
+
         register_rest_route('wbam/v1', '/models', [
             'methods' => 'GET',
             'callback' => fn(WP_REST_Request $r) => rest_ensure_response(WBAM_Catalog::search_models((string) $r['term'])),
@@ -372,11 +386,39 @@ class WBAM_Rest {
         return rest_ensure_response(['ok' => true, 'title' => $title, 'price' => number_format($amount, 2, '.', ''), 'taxable' => false]);
     }
 
+    /** True when the request Origin matches one of the comma-separated allowed origins. */
+    private static function origin_ok(?string $origin): bool {
+        if (!$origin) return true; // same-origin / non-browser
+        $allowed = (string) WBAM_Settings::get('booking_origin');
+        if (!trim($allowed)) return true;
+        foreach (preg_split('/[,\s]+/', $allowed) as $a) {
+            $a = rtrim(trim($a), '/');
+            if ($a !== '' && str_starts_with($origin, $a)) return true;
+        }
+        return false;
+    }
+
+    /** Public model list for the storefront typeahead: GET /devices. */
+    public static function devices() {
+        $res = rest_ensure_response(['ok' => true, 'devices' => WBAM_Quotes::device_list()]);
+        $res->header('Access-Control-Allow-Origin', '*');
+        $res->header('Cache-Control', 'public, max-age=1800');
+        return $res;
+    }
+
+    /** Public price-book quote: GET /quote?device=iPhone 15. */
+    public static function quote(WP_REST_Request $r) {
+        $q = WBAM_Quotes::quote((string) $r['device']);
+        $res = rest_ensure_response($q ? ['ok' => true] + $q : ['ok' => false]);
+        $res->header('Access-Control-Allow-Origin', '*'); // public pricing, no credentials
+        if (!$q) $res->set_status(404);
+        return $res;
+    }
+
     /** Storefront booking form → ticket. Locked to the shop's origin + honeypot + throttle. */
     public static function booking(WP_REST_Request $r) {
         $origin = get_http_origin();
-        $allowed = WBAM_Settings::get('booking_origin');
-        if ($origin && $allowed && !str_starts_with($origin, rtrim($allowed, '/'))) {
+        if (!self::origin_ok($origin)) {
             return new WP_Error('wbam_origin', 'Origin not allowed', ['status' => 403]);
         }
         if (!empty($r['website'])) { // honeypot
