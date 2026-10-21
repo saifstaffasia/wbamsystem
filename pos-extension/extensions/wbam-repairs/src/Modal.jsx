@@ -11,7 +11,10 @@ export default async () => {
 /**
  * Repairs at the till: book a repair (customer gets confirmation automatically,
  * optional deposit straight into the basket) and take deposits/balances against
- * existing tickets — the SERVER composes cart-line titles, staff never type codes.
+ * existing tickets — the SERVER composes cart lines, staff never type codes.
+ * Deposits are sold as Repair Deposit GIFT CARDS (vouchers): redeemable online
+ * against the balance invoice (PayPal Pay in 3 covers the remainder) or at the
+ * till as a tender. Balances stay custom sales at the full remaining price.
  * Device intake lives on its own tile ("Trade In Device Intake").
  */
 function Extension() {
@@ -78,6 +81,29 @@ function Extension() {
     });
   };
 
+  // Deposits are sold as Repair Deposit GIFT CARDS (vouchers): the customer
+  // redeems the code online against the balance invoice — PayPal Pay in 3 then
+  // applies to the remainder — or hands it back as payment at the till.
+  // The server decomposes the amount into denominations; each cart line gets a
+  // T-code property so the Hub links the sale to the ticket.
+  const addVoucher = async (ticketId, amt) => {
+    const v = await call('voucher', {
+      method: 'POST',
+      body: JSON.stringify({ ticket_id: ticketId, amount: amt }),
+    });
+    let stamped = true;
+    for (const line of v.lines) {
+      const uuid = await shopify.cart.addLineItem(line.variant_id, line.qty);
+      try {
+        await shopify.cart.addLineItemProperties(uuid, v.properties);
+      } catch (e) { stamped = false; }
+    }
+    if (!stamped) {
+      try { await shopify.cart.addCartProperties(v.cart_note); } catch (e) {}
+    }
+    return v;
+  };
+
   const submitBooking = async () => {
     setBusy(true);
     setMsg('');
@@ -101,8 +127,13 @@ function Extension() {
       });
       const dep = parseFloat(deposit || '0');
       if (dep > 0) {
-        await addLine(t.id, 'deposit', dep);
-        shopify.toast.show(`${t.ticket} booked — deposit £${dep.toFixed(2)} in cart`);
+        // The ticket exists either way — a voucher problem must not re-book it.
+        try {
+          await addVoucher(t.id, dep);
+          shopify.toast.show(`${t.ticket} booked — £${dep.toFixed(2)} deposit voucher in cart`);
+        } catch (ve) {
+          setMsg(`${t.ticket} booked, but the deposit voucher wasn't added: ${String((ve && ve.message) || ve)} Use "Take deposit / balance" to retry.`);
+        }
       } else {
         shopify.toast.show(`${t.ticket} booked`);
       }
@@ -134,8 +165,13 @@ function Extension() {
     setBusy(true);
     setMsg('');
     try {
-      await addLine(picked.id, which, amt);
-      shopify.toast.show(`${picked.ticket} ${which} £${amt.toFixed(2)} in cart`);
+      if (which === 'deposit') {
+        await addVoucher(picked.id, amt);
+        shopify.toast.show(`${picked.ticket} £${amt.toFixed(2)} deposit voucher in cart`);
+      } else {
+        await addLine(picked.id, which, amt);
+        shopify.toast.show(`${picked.ticket} ${which} £${amt.toFixed(2)} in cart`);
+      }
       setView('home'); setQ(''); setResults([]); setPicked(null); setAmount('');
     } catch (e) {
       setMsg(String((e && e.message) || e));
@@ -191,7 +227,7 @@ function Extension() {
 
               <s-box padding="small"><s-text-field label="Estimated completion (YYYY-MM-DD)" value={due} onChange={grab(setDue)} onInput={grab(setDue)} /></s-box>
               <s-box padding="small"><s-text-field label="Quote £ (optional)" value={quote} onChange={grab(setQuote)} onInput={grab(setQuote)} /></s-box>
-              <s-box padding="small"><s-text-field label="Deposit £ (optional)" value={deposit} onChange={grab(setDeposit)} onInput={grab(setDeposit)} /></s-box>
+              <s-box padding="small"><s-text-field label="Deposit £ (optional — sold as a voucher, £10 steps)" value={deposit} onChange={grab(setDeposit)} onInput={grab(setDeposit)} /></s-box>
               <s-box padding="small"><s-button disabled={busy || undefined} onClick={submitBooking}>{busy ? 'Booking…' : 'Book repair'}</s-button></s-box>
               <s-box padding="small"><s-button onClick={() => setView('home')}>← Back</s-button></s-box>
             </s-box>
@@ -213,10 +249,10 @@ function Extension() {
               {picked ? (
                 <s-box>
                   <s-box padding="small">
-                    <s-text>{`${picked.ticket} — ${picked.customer} (${picked.status}). Paid so far £${Number(picked.paid).toFixed(2)}.`}</s-text>
+                    <s-text>{`${picked.ticket} — ${picked.customer} (${picked.status}). Paid so far £${Number(picked.paid).toFixed(2)}.${Number(picked.voucher) > 0 ? ` Voucher held £${Number(picked.voucher).toFixed(2)} — ring the FULL balance and take the voucher as Gift card payment at checkout.` : ''}`}</s-text>
                   </s-box>
                   <s-box padding="small"><s-text-field label="Amount £" value={amount} onChange={grab(setAmount)} onInput={grab(setAmount)} /></s-box>
-                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add deposit to cart</s-button></s-box>
+                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add deposit voucher to cart</s-button></s-box>
                   <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('balance')}>Add balance to cart</s-button></s-box>
                 </s-box>
               ) : null}

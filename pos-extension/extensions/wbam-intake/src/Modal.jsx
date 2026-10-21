@@ -119,7 +119,14 @@ function Extension() {
       if (!optionsComplete()) { setMsg('Pick every option.'); return; }
     }
     if (price === '' || !(parseFloat(price) >= 0)) { setMsg('Enter the price paid.'); return; }
-    if (source !== 'supplier' && (!sName.trim() || !sMobile.trim())) { setMsg('Seller name and mobile are required.'); return; }
+    if (source !== 'supplier') {
+      if (!sName.trim() || !sMobile.trim()) { setMsg('Seller name and mobile are required.'); return; }
+      // The purchase receipt is emailed to the seller — a valid email is required.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(sEmail.trim())) {
+        setMsg('Enter a valid seller email — their receipt is sent there.');
+        return;
+      }
+    }
     setBusy(true);
     setMsg('');
     try {
@@ -132,7 +139,7 @@ function Extension() {
         location_id: shopify.session.currentSession.locationId,
         seller: {
           name: sName, mobile: sMobile, dob: sDob, address1: sAddr, postcode: sPostcode,
-          email: sEmail, id_type: sIdType, id_ref: sIdRef,
+          email: sEmail.trim(), id_type: sIdType, id_ref: sIdRef,
         },
       };
       if (payout === 'bank') body.bank = { account_name: bkName, sort_code: bkSort, account_number: bkAcct };
@@ -150,9 +157,9 @@ function Extension() {
             [`Trade-in ${res.unit_code}`]: `${res.title} — IMEI ${res.imei || imei} — allowance £${allowance}`,
           });
         } catch (e) {}
-        shopify.toast.show(`${res.unit_code} saved — take £${allowance} on the Trade In payment method`);
+        shopify.toast.show(`${res.unit_code} saved — receipt emailed. Take £${allowance} on the Trade In payment method`);
       } else {
-        shopify.toast.show(`${res.unit_code} added to stock`);
+        shopify.toast.show(`${res.unit_code} added to stock${source === 'supplier' ? '' : ' — receipt emailed'}`);
       }
       setImei(''); setSearch(''); setModels([]); setProduct(null); setSel({});
       setCustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
@@ -259,7 +266,7 @@ function Extension() {
                   <s-box padding="small"><s-text-field label="Date of birth (YYYY-MM-DD)" value={sDob} onChange={grab(setSDob)} onInput={grab(setSDob)} /></s-box>
                   <s-box padding="small"><s-text-field label="Address" value={sAddr} onChange={grab(setSAddr)} onInput={grab(setSAddr)} /></s-box>
                   <s-box padding="small"><s-text-field label="Postcode" value={sPostcode} onChange={grab(setSPostcode)} onInput={grab(setSPostcode)} /></s-box>
-                  <s-box padding="small"><s-text-field label="Email (optional)" value={sEmail} onChange={grab(setSEmail)} onInput={grab(setSEmail)} /></s-box>
+                  <s-box padding="small"><s-text-field label="Email (receipt is sent here)" value={sEmail} onChange={grab(setSEmail)} onInput={grab(setSEmail)} /></s-box>
                   <s-box padding="small"><s-text>Photo ID{sIdType ? `: ${sIdType}` : ''}</s-text></s-box>
                   <s-box padding="small"><s-button onClick={() => setSIdType('Passport')}>{`${sIdType === 'Passport' ? '✓ ' : ''}Passport`}</s-button></s-box>
                   <s-box padding="small"><s-button onClick={() => setSIdType('Driving licence')}>{`${sIdType === 'Driving licence' ? '✓ ' : ''}Driving licence`}</s-button></s-box>
