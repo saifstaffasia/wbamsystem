@@ -41,6 +41,7 @@ function Extension() {
   const [q, setQ] = useState('');
   const [results, setResults] = useState([]);
   const [picked, setPicked] = useState(null);
+  const [info, setInfo] = useState(null); // full ticket detail for the picked row
   const [amount, setAmount] = useState('');
 
   const pickType = (r) => () => setRtype(rtype === r ? '' : r);
@@ -150,12 +151,21 @@ function Extension() {
     setBusy(true);
     setMsg('');
     setPicked(null);
+    setInfo(null);
     try {
       setResults(await call(`tickets?q=${encodeURIComponent(q)}`));
     } catch (e) {
       setMsg(String((e && e.message) || e));
     }
     setBusy(false);
+  };
+
+  // Tap a result → pull the full repair details for the card.
+  const pick = async (t) => {
+    setPicked(t);
+    setAmount(t.due != null ? String(t.due) : '');
+    setInfo(null);
+    try { setInfo(await call(`ticket?id=${t.id}`)); } catch (e) { setMsg(String((e && e.message) || e)); }
   };
 
   const takePayment = async (which) => {
@@ -172,7 +182,7 @@ function Extension() {
         await addLine(picked.id, which, amt);
         shopify.toast.show(`${picked.ticket} ${which} £${amt.toFixed(2)} in cart`);
       }
-      setView('home'); setQ(''); setResults([]); setPicked(null); setAmount('');
+      setView('home'); setQ(''); setResults([]); setPicked(null); setInfo(null); setAmount('');
     } catch (e) {
       setMsg(String((e && e.message) || e));
     }
@@ -195,7 +205,7 @@ function Extension() {
                 <s-button onClick={() => { setMsg(''); setView('book'); }}>New repair booking</s-button>
               </s-box>
               <s-box padding="small">
-                <s-button onClick={() => { setMsg(''); setView('pay'); }}>Take deposit / balance</s-button>
+                <s-button onClick={() => { setMsg(''); setView('pay'); }}>Find ticket — details & payments</s-button>
               </s-box>
             </s-box>
           )}
@@ -240,7 +250,7 @@ function Extension() {
               <s-box>
                 {results.map((t) => (
                   <s-box padding="small" key={t.id}>
-                    <s-button onClick={() => { setPicked(t); setAmount(t.due != null ? String(t.due) : ''); }}>
+                    <s-button onClick={() => pick(t)}>
                       {`${t.ticket} · ${t.customer} · ${t.device}${t.due != null ? ` · due £${Number(t.due).toFixed(2)}` : ''}${picked && picked.id === t.id ? ' ✓' : ''}`}
                     </s-button>
                   </s-box>
@@ -248,9 +258,29 @@ function Extension() {
               </s-box>
               {picked ? (
                 <s-box>
-                  <s-box padding="small">
-                    <s-text>{`${picked.ticket} — ${picked.customer} (${picked.status}). Paid so far £${Number(picked.paid).toFixed(2)}.${Number(picked.voucher) > 0 ? ` Voucher held £${Number(picked.voucher).toFixed(2)} — ring the FULL balance and take the voucher as Gift card payment at checkout.` : ''}`}</s-text>
-                  </s-box>
+                  {info ? (
+                    <s-box>
+                      <s-box padding="small"><s-text>{`${info.ticket} — ${info.status.replace('_', ' ').toUpperCase()}${info.branch ? ` · ${info.branch}` : ''} · booked ${String(info.created_at).slice(0, 10)}`}</s-text></s-box>
+                      <s-box padding="small"><s-text>{`${info.customer} · ${info.phone}${info.email ? ` · ${info.email}` : ''}`}</s-text></s-box>
+                      <s-box padding="small"><s-text>{`${info.device}${info.imei ? ` · IMEI ${info.imei}` : ''}${info.passcode ? ` · passcode ${info.passcode}` : ''}`}</s-text></s-box>
+                      <s-box padding="small"><s-text>{`${info.repair_type || 'Repair'}: ${info.fault || '—'}`}</s-text></s-box>
+                      {info.diagnosis ? <s-box padding="small"><s-text>{`Diagnosis: ${info.diagnosis}`}</s-text></s-box> : null}
+                      <s-box padding="small"><s-text>{`${info.due_date ? `Est. completion ${info.due_date} · ` : ''}${info.device_held ? 'device with us' : 'device with customer'}`}</s-text></s-box>
+                      <s-box padding="small">
+                        <s-text>{`Quote ${info.quote != null ? '£' + Number(info.quote).toFixed(2) : '—'} · Paid £${Number(info.paid).toFixed(2)}${Number(info.voucher) > 0 ? ` · Voucher £${Number(info.voucher).toFixed(2)}` : ''}${info.due != null ? ` · DUE £${Number(info.due).toFixed(2)}` : ''}`}</s-text>
+                      </s-box>
+                      {Number(info.voucher) > 0 ? (
+                        <s-box padding="small"><s-text>Ring the FULL balance and take the voucher as Gift card payment at checkout.</s-text></s-box>
+                      ) : null}
+                      {(info.events || []).slice(0, 3).map((ev, i) => (
+                        <s-box padding="small" key={i}><s-text>{`· ${ev.at} ${ev.event}${ev.detail ? ` — ${ev.detail}` : ''}`}</s-text></s-box>
+                      ))}
+                    </s-box>
+                  ) : (
+                    <s-box padding="small">
+                      <s-text>{`${picked.ticket} — ${picked.customer} (${picked.status}). Paid so far £${Number(picked.paid).toFixed(2)}. Loading details…`}</s-text>
+                    </s-box>
+                  )}
                   <s-box padding="small"><s-text-field label="Amount £" value={amount} onChange={grab(setAmount)} onInput={grab(setAmount)} /></s-box>
                   <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('deposit')}>Add deposit voucher to cart</s-button></s-box>
                   <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => takePayment('balance')}>Add balance to cart</s-button></s-box>

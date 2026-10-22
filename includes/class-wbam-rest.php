@@ -104,9 +104,24 @@ class WBAM_Rest {
             'callback' => [self::class, 'pos_tickets'],
             'permission_callback' => [self::class, 'pos_auth'],
         ]);
+        register_rest_route('wbam/v1', '/pos/ticket', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'pos_ticket'],
+            'permission_callback' => [self::class, 'pos_auth'],
+        ]);
+        register_rest_route('wbam/v1', '/pos/units', [
+            'methods' => 'GET',
+            'callback' => [self::class, 'pos_units'],
+            'permission_callback' => [self::class, 'pos_auth'],
+        ]);
         register_rest_route('wbam/v1', '/pos/line', [
             'methods' => 'POST',
             'callback' => [self::class, 'pos_line'],
+            'permission_callback' => [self::class, 'pos_auth'],
+        ]);
+        register_rest_route('wbam/v1', '/pos/voucher', [
+            'methods' => 'POST',
+            'callback' => [self::class, 'pos_voucher'],
             'permission_callback' => [self::class, 'pos_auth'],
         ]);
         register_rest_route('wbam/v1', '/pos/models', [
@@ -219,6 +234,67 @@ class WBAM_Rest {
         register_rest_route('wbam/v1', '/app/ticket/(?P<id>\d+)/(?P<op>status|save|draft|part-stock|part-order)', [
             'methods' => 'POST',
             'callback' => [self::class, 'app_ticket_op'],
+            'permission_callback' => $staff,
+        ]);
+        // Refurbishment: cost lines + totals for the modal…
+        register_rest_route('wbam/v1', '/app/unit/(?P<id>\d+)/costs', [
+            'methods' => 'GET',
+            'callback' => function (WP_REST_Request $r) {
+                $u = WBAM_Units::get((int) $r['id']);
+                if (!$u) return new WP_Error('wbam_unit', 'Unknown unit', ['status' => 404]);
+                $c = WBAM_Units::costs((int) $r['id']);
+                return rest_ensure_response($c + ['all_in' => WBAM_Units::effective_cost($u)]);
+            },
+            'permission_callback' => $staff,
+        ]);
+        // …and the bench operations: start → cost / cost-delete → complete | cancel.
+        register_rest_route('wbam/v1', '/app/unit/(?P<id>\d+)/refurb', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                $id = (int) $r['id'];
+                $p  = (array) $r->get_json_params();
+                try {
+                    switch ((string) ($p['op'] ?? '')) {
+                        case 'start':
+                            return rest_ensure_response(['ok' => true, 'unit' => WBAM_Units::refurb_start($id)]);
+                        case 'cost':
+                            return rest_ensure_response(['ok' => true, 'costs' => WBAM_Units::refurb_cost($id, $p)]);
+                        case 'cost-delete':
+                            return rest_ensure_response(['ok' => true, 'costs' => WBAM_Units::refurb_cost_delete($id, (int) ($p['row_id'] ?? 0))]);
+                        case 'complete':
+                            $price = ($p['sell_price'] ?? '') !== '' ? (float) $p['sell_price'] : null;
+                            return rest_ensure_response(['ok' => true, 'unit' => WBAM_Units::refurb_complete($id, (string) ($p['grade'] ?? ''), $price)]);
+                        case 'cancel':
+                            return rest_ensure_response(['ok' => true, 'unit' => WBAM_Units::refurb_cancel($id)]);
+                    }
+                    return new WP_Error('wbam_refurb', 'Bad op', ['status' => 400]);
+                } catch (Throwable $e) {
+                    return new WP_Error('wbam_refurb', $e->getMessage(), ['status' => 400]);
+                }
+            },
+            'permission_callback' => $staff,
+        ]);
+        // Email the purchase receipt for a unit again — to the seller on file, or
+        // to another address (correction / sample). Same template as intake.
+        register_rest_route('wbam/v1', '/app/unit/(?P<id>\d+)/receipt', [
+            'methods' => 'POST',
+            'callback' => function (WP_REST_Request $r) {
+                $u = WBAM_Units::get((int) $r['id']);
+                if (!$u) return new WP_Error('wbam_unit', 'Unknown unit', ['status' => 404]);
+                $p  = (array) $r->get_json_params();
+                $to = trim((string) ($p['to'] ?? ''));
+                if ($to !== '' && !is_email($to)) {
+                    return new WP_Error('wbam_rcpt', 'That isn\'t a valid email address.', ['status' => 400]);
+                }
+                $final = $to !== '' ? $to : trim((string) (($u['seller']['email'] ?? '')));
+                if (!is_email($final)) {
+                    return new WP_Error('wbam_rcpt', 'No seller email on file — enter an address to send to.', ['status' => 400]);
+                }
+                if (!WBAM_Notify::intake_receipt($u, $final)) {
+                    return new WP_Error('wbam_rcpt', 'Sending failed — it has been queued for retry.', ['status' => 502]);
+                }
+                return rest_ensure_response(['ok' => true, 'to' => $final, 'unit' => $u['unit_code']]);
+            },
             'permission_callback' => $staff,
         ]);
     }
@@ -365,7 +441,124 @@ class WBAM_Rest {
                 'status'   => $t['status'],
                 'quote'    => $t['quote'] !== null ? (float) $t['quote'] : null,
                 'paid'     => $eco['paid'],
+                'voucher'  => $eco['voucher'],
                 'due'      => $t['quote'] !== null ? max(0, round((float) $t['quote'] - $eco['paid'], 2)) : null,
+            ];
+        }
+        return rest_ensure_response($out);
+    }
+
+    /**
+     * Tile → deposit as a VOUCHER: decompose the amount into Repair Deposit gift
+     * card denominations the extension adds to the cart. The gift card is a
+     * liability the customer redeems later — online against the balance invoice
+     * (where PayPal Pay in 3 covers the remainder) or at the till as a tender.
+     * The server spells the decomposition and the T-code properties; staff never
+     * type codes.
+     */
+    public static function pos_voucher(WP_REST_Request $r) {
+        $t = WBAM_Tickets::get((int) $r['ticket_id']);
+        if (!$t) return new WP_Error('wbam_pos', 'Unknown ticket', ['status' => 404]);
+        $amount = round((float) $r['amount'], 2);
+        if ($amount <= 0) return new WP_Error('wbam_pos', 'Amount must be positive', ['status' => 400]);
+
+        $opts = WBAM_Catalog::deposit_variants();
+        if (!$opts) {
+            return new WP_Error('wbam_pos',
+                'Deposit vouchers aren\'t set up yet — activate gift cards and create the "Repair Deposit" gift card product in Shopify admin.',
+                ['status' => 503]);
+        }
+        $steps = array_map(fn($o) => $o['value'], $opts);
+        $min = min($steps);
+
+        // Greedy decomposition in pence (denominations are 10/20/30/50/100 so greedy is exact).
+        $left = (int) round($amount * 100);
+        $lines = [];
+        foreach ($opts as $o) {
+            $unit = (int) round($o['value'] * 100);
+            if ($unit <= 0) continue;
+            $qty = intdiv($left, $unit);
+            if ($qty > 0) {
+                $lines[] = ['variant_id' => $o['variant_id'], 'qty' => $qty, 'value' => $o['value']];
+                $left -= $qty * $unit;
+            }
+        }
+        if ($left !== 0) {
+            return new WP_Error('wbam_pos',
+                sprintf('Deposits are taken in £%s steps (available: £%s).',
+                    number_format($min, 0), implode(', £', array_map(fn($v) => number_format($v, 0), array_reverse($steps)))),
+                ['status' => 400]);
+        }
+
+        WBAM_Tickets::event((int) $t['id'], 'pos_voucher', 'deposit voucher £' . number_format($amount, 2) . ' sent to POS cart');
+        return rest_ensure_response([
+            'ok'         => true,
+            'ticket'     => $t['ticket_code'],
+            'lines'      => $lines,
+            // Stamped on each gift card line so the webhook links the sale to the ticket.
+            'properties' => ['Repair voucher' => $t['ticket_code'] . ' — ' . $t['device_model']],
+            // Fallback cart attribute for older POS builds without line properties.
+            'cart_note'  => ['Repair voucher ' . $t['ticket_code'] => '£' . number_format($amount, 2)],
+        ]);
+    }
+
+    /** Tile → full repair details for one ticket (read-only at the till). */
+    public static function pos_ticket(WP_REST_Request $r) {
+        global $wpdb;
+        $t = WBAM_Tickets::get((int) $r['id']);
+        if (!$t) return new WP_Error('wbam_pos', 'Unknown ticket', ['status' => 404]);
+        $eco = WBAM_Tickets::economics((int) $t['id']);
+        $events = $wpdb->get_results($wpdb->prepare(
+            "SELECT event, detail, created_at FROM {$wpdb->prefix}wbam_ticket_events
+             WHERE ticket_id=%d ORDER BY id DESC LIMIT 5", (int) $t['id']), ARRAY_A) ?: [];
+        $branch = WBAM_Settings::branch((int) $t['branch_id']);
+        return rest_ensure_response([
+            'id'          => (int) $t['id'],
+            'ticket'      => $t['ticket_code'],
+            'status'      => $t['status'],
+            'customer'    => $t['customer_name'],
+            'phone'       => $t['phone'],
+            'email'       => $t['email'],
+            'device'      => $t['device_model'],
+            'imei'        => $t['imei'],
+            'passcode'    => $t['passcode'],
+            'repair_type' => $t['repair_type'],
+            'fault'       => $t['fault'],
+            'diagnosis'   => $t['diagnosis'],
+            'due_date'    => $t['due_date'],
+            'device_held' => (int) $t['device_held'],
+            'branch'      => $branch['name'] ?? '',
+            'quote'       => $t['quote'] !== null ? (float) $t['quote'] : null,
+            'paid'        => $eco['paid'],
+            'voucher'     => $eco['voucher'],
+            'due'         => $t['quote'] !== null ? max(0, round((float) $t['quote'] - $eco['paid'], 2)) : null,
+            'created_at'  => $t['created_at'],
+            'events'      => array_map(fn($e) => [
+                'at'     => mysql2date('j M H:i', $e['created_at']),
+                'event'  => $e['event'],
+                'detail' => mb_substr((string) $e['detail'], 0, 120),
+            ], $events),
+        ]);
+    }
+
+    /** Tile → intaken devices (recent, or search by IMEI / unit code / model). */
+    public static function pos_units(WP_REST_Request $r) {
+        $rows = WBAM_Units::search(['q' => (string) $r['q']]);
+        $branches = [];
+        foreach (WBAM_Settings::branches(false) as $b) $branches[(int) $b['id']] = $b['name'];
+        $out = [];
+        foreach (array_slice($rows, 0, 20) as $u) {
+            $out[] = [
+                'id'      => (int) $u['id'],
+                'unit'    => $u['unit_code'],
+                'device'  => trim((string) $u['model_title']) . (trim((string) $u['variant_title']) !== '' ? ' — ' . trim((string) $u['variant_title']) : ''),
+                'grade'   => $u['grade'],
+                'status'  => $u['status'],
+                'imei4'   => substr((string) $u['imei'], -4),
+                'paid'    => (float) $u['purchase_price'],
+                'seller'  => $u['seller_name'],
+                'branch'  => $branches[(int) $u['branch_id']] ?? '',
+                'when'    => mysql2date('j M Y', $u['created_at']),
             ];
         }
         return rest_ensure_response($out);
@@ -455,32 +648,46 @@ class WBAM_Rest {
 
     /** Shared intake dispatcher (staff app + POS tile): catalog or custom path. */
     private static function do_intake(WP_REST_Request $r, int $branch_id): array {
+        $source = (string) $r['source'];
+        $seller = (array) ($r['seller'] ?? []);
+        // Seller intakes (buy-in / trade-in) are only accepted with a valid email —
+        // the purchase receipt is emailed to the seller. Supplier stock has no seller.
+        if ($source !== 'supplier' && !is_email(trim((string) ($seller['email'] ?? '')))) {
+            throw new InvalidArgumentException('A valid seller email is required — their purchase receipt is emailed to them.');
+        }
         $common = [
             'imei'           => (string) $r['imei'],
             'purchase_price' => (float) $r['purchase_price'],
             'branch_id'      => $branch_id,
-            'source'         => (string) $r['source'],
+            'source'         => $source,
             'source_ref'     => (string) $r['source_ref'],
             'payout_method'  => (string) $r['payout_method'],
             'battery_health' => (string) $r['battery_health'],
             'checkmend_ref'  => (string) $r['checkmend_ref'],
             'notes'          => (string) $r['notes'],
-            'seller'         => (array) ($r['seller'] ?? []),
+            'seller'         => $seller,
             'bank'           => (array) ($r['bank'] ?? []),
         ];
         if ((int) $r['custom'] === 1) {
-            return WBAM_Units::intake_custom($common + [
+            $unit = WBAM_Units::intake_custom($common + [
                 'title'      => (string) $r['title'],
                 'grade'      => (string) $r['grade'],
                 'sell_price' => (float) $r['sell_price'],
             ]);
+        } else {
+            $unit = WBAM_Units::intake($common + [
+                'product_id'     => (int) $r['product_id'],
+                'model_title'    => (string) $r['model_title'],
+                'selected'       => (array) $r['selected'],
+                'price_override' => (string) $r['price_override'],
+            ]);
         }
-        return WBAM_Units::intake($common + [
-            'product_id'     => (int) $r['product_id'],
-            'model_title'    => (string) $r['model_title'],
-            'selected'       => (array) $r['selected'],
-            'price_override' => (string) $r['price_override'],
-        ]);
+        // Receipt to the seller; a mail hiccup must never fail the intake
+        // (WBAM_Notify queues failed sends for retry anyway).
+        if ($source !== 'supplier') {
+            try { WBAM_Notify::intake_receipt($unit); } catch (Throwable $e) {}
+        }
+        return $unit;
     }
 
     public static function intake(WP_REST_Request $r) {

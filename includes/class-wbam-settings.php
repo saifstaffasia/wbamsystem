@@ -36,6 +36,7 @@ class WBAM_Settings {
             'twilio_token'  => '',
             'twilio_from'   => '',
             'booking_origin'=> 'https://webuyanymobile.com, https://www.webuyanymobile.com, https://sa-we-buy-any-mobile.myshopify.com',
+            'deposit_product_handle' => 'repair-deposit', // gift card product sold as repair deposit vouchers
             'label_w_mm'    => 40,
             'label_h_mm'    => 30,
             'business_name' => 'WeBuyAnyMobile',

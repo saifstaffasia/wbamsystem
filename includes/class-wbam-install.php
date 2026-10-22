@@ -3,7 +3,7 @@ if (!defined('ABSPATH')) exit;
 
 class WBAM_Install {
 
-    const DB_VER = '4';
+    const DB_VER = '5';
 
     public static function activate(): void {
         self::tables();
@@ -369,6 +369,22 @@ class WBAM_Install {
             created_at DATETIME NOT NULL,
             PRIMARY KEY  (id),
             KEY ticket_id (ticket_id)
+        ) $c;";
+
+        // v5: refurb ledger — parts/labour booked against an owned unit. The sum
+        // joins purchase_price as the unit's true cost (margins, Shopify unit cost).
+        $sql[] = "CREATE TABLE {$p}wbam_unit_costs (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            unit_id BIGINT UNSIGNED NOT NULL,
+            kind VARCHAR(16) NOT NULL DEFAULT 'part',
+            part_id BIGINT UNSIGNED NULL,
+            description VARCHAR(255) NOT NULL DEFAULT '',
+            qty INT NOT NULL DEFAULT 1,
+            unit_cost DECIMAL(10,2) NOT NULL DEFAULT 0,
+            user_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            PRIMARY KEY  (id),
+            KEY unit_id (unit_id)
         ) $c;";
 
         $sql[] = "CREATE TABLE {$p}wbam_sync_state (

@@ -16,6 +16,11 @@ export default async () => {
 function Extension() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  const [view, setView] = useState('form'); // form | list
+
+  // intaken-device list
+  const [lq, setLq] = useState('');
+  const [units, setUnits] = useState(null);
 
   const [imei, setImei] = useState('');
   const [search, setSearch] = useState('');
@@ -95,6 +100,19 @@ function Extension() {
   };
   const chooseSource = (s) => { setSource(s); if (s === 'tradein') setPayout('store_credit'); };
   const optionsComplete = () => product && Object.keys(product.options || {}).every((n) => sel[n]);
+
+  // Read-only list of intaken devices (recent, or search IMEI / unit code / model).
+  const loadUnits = async (term) => {
+    setBusy(true);
+    setMsg('');
+    try {
+      setUnits(await call(`units?q=${encodeURIComponent(term || '')}`));
+    } catch (e) {
+      setMsg(String((e && e.message) || e));
+    }
+    setBusy(false);
+  };
+  const openList = () => { setMsg(''); setView('list'); if (units === null) loadUnits(''); };
 
   // Every option picked → prefill Selling price with the current shelf price.
   const priceSeq = useRef(0);
@@ -178,6 +196,28 @@ function Extension() {
         <s-box padding="small">
           {msg ? <s-box padding="small"><s-text>{msg}</s-text></s-box> : null}
 
+          <s-box padding="small">
+            <s-button onClick={() => (view === 'list' ? (setMsg(''), setView('form')) : openList())}>
+              {view === 'list' ? '← Back to intake' : '📋 View intaken devices'}
+            </s-button>
+          </s-box>
+
+          {view === 'list' ? (
+            <s-box>
+              <s-box padding="small"><s-text-field label="Search (IMEI / unit code / model)" value={lq} onChange={grab(setLq)} onInput={grab(setLq)} /></s-box>
+              <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => loadUnits(lq)}>{busy ? 'Searching…' : 'Search'}</s-button></s-box>
+              {(units || []).map((u) => (
+                <s-box padding="small" key={u.id}>
+                  <s-text>{`${u.unit} · ${u.device}`}</s-text>
+                  <s-text>{`${u.status.replace('_', ' ')} · paid £${Number(u.paid).toFixed(2)} · …${u.imei4} · ${u.branch} · ${u.when}${u.seller ? ` · ${u.seller}` : ''}`}</s-text>
+                </s-box>
+              ))}
+              {units !== null && !(units || []).length ? (
+                <s-box padding="small"><s-text>No devices found.</s-text></s-box>
+              ) : null}
+            </s-box>
+          ) : (
+          <s-box>
           <s-box padding="small"><s-text-field label="IMEI / serial" value={imei} onChange={grab(setImei)} onInput={grab(setImei)} /></s-box>
 
           {!custom ? (
@@ -280,6 +320,8 @@ function Extension() {
               <s-box padding="small"><s-button disabled={busy || undefined} onClick={submit}>{busy ? 'Saving…' : 'Save intake (+1 stock)'}</s-button></s-box>
             </s-box>
           ) : null}
+          </s-box>
+          )}
         </s-box>
       </s-scroll-box>
     </s-page>

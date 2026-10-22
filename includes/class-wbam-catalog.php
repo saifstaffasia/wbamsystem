@@ -121,6 +121,36 @@ class WBAM_Catalog {
         if ($errs) throw new RuntimeException('Order attributes failed: ' . wp_json_encode($errs));
     }
 
+    /**
+     * Denominations of the "Repair Deposit" gift card product (deposits are sold
+     * as vouchers, so customers can redeem them online against a draft invoice —
+     * PayPal Pay in 3 then applies to the remainder). Cached 6h; [] when the
+     * product doesn't exist yet (gift cards not activated / product not created).
+     * Each row: ['variant_id' => int, 'value' => float] sorted largest first.
+     */
+    public static function deposit_variants(bool $fresh = false): array {
+        $key = 'wbam_deposit_variants';
+        if (!$fresh) {
+            $cached = get_transient($key);
+            if (is_array($cached)) return $cached;
+        }
+        $handle = sanitize_title((string) WBAM_Settings::get('deposit_product_handle', 'repair-deposit'));
+        $out = [];
+        try {
+            [$data] = WBAM_Shopify::i()->rest('GET', '/products.json?handle=' . rawurlencode($handle) . '&fields=id,title,variants,status');
+            $p = ($data['products'] ?? [])[0] ?? null;
+            if ($p && ($p['status'] ?? 'active') === 'active') {
+                foreach ((array) ($p['variants'] ?? []) as $v) {
+                    $val = (float) ($v['price'] ?? 0);
+                    if ($val > 0) $out[] = ['variant_id' => (int) $v['id'], 'value' => $val];
+                }
+                usort($out, fn($a, $b) => $b['value'] <=> $a['value']);
+            }
+        } catch (Throwable $e) { /* treated as not-set-up; POS shows a clear message */ }
+        set_transient($key, $out, $out ? 6 * HOUR_IN_SECONDS : 5 * MINUTE_IN_SECONDS);
+        return $out;
+    }
+
     /** Publish a product to the Point of Sale channel (publication id cached). */
     public static function publish_to_pos(string $product_gid): void {
         $pub = WBAM_Settings::state_get('pos_publication_id');
@@ -526,11 +556,13 @@ class WBAM_Catalog {
         if ($errs) throw new RuntimeException('Inventory set failed: ' . wp_json_encode($errs));
     }
 
-    /** Keep Shopify's variant cost = rolling average purchase price of in-stock units. */
+    /** Keep Shopify's variant cost = rolling average ALL-IN cost (purchase + refurb) of in-stock units. */
     public static function refresh_variant_cost(int $variant_id, int $inventory_item_id): void {
         global $wpdb;
         $avg = $wpdb->get_var($wpdb->prepare(
-            "SELECT AVG(purchase_price) FROM {$wpdb->prefix}wbam_units WHERE variant_id=%d AND status='in_stock'",
+            "SELECT AVG(u.purchase_price + COALESCE(
+                (SELECT SUM(c.qty*c.unit_cost) FROM {$wpdb->prefix}wbam_unit_costs c WHERE c.unit_id=u.id), 0))
+             FROM {$wpdb->prefix}wbam_units u WHERE u.variant_id=%d AND u.status='in_stock'",
             $variant_id
         ));
         if ($avg === null) return; // none left in stock — keep last cost for reference

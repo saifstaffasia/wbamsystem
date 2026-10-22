@@ -256,7 +256,7 @@
     const m = q('#wa-main');
     m.innerHTML = `<div class="wa-card"><h2>Units</h2>
       <div class="wa-row"><input id="un-q" placeholder="scan / IMEI / code / model…" style="max-width:300px">
-      <select id="un-st"><option value="in_stock">In stock</option><option value="sold">Sold</option><option value="written_off">Written off</option><option value="">Any</option></select>
+      <select id="un-st"><option value="in_stock">In stock</option><option value="in_refurb">In refurb</option><option value="sold">Sold</option><option value="written_off">Written off</option><option value="">Any</option></select>
       <select id="un-br"><option value="0">All branches</option>${BOOT.branches.map((b) => `<option value="${b.id}">${esc(b.name)}</option>`).join('')}</select>
       <button class="wa-btn s p" id="un-go">Search</button></div>
       <div id="un-list" style="margin-top:10px">Loading…</div></div>`;
@@ -273,6 +273,9 @@
           <td class="wa-row">
             <a class="wa-btn s" target="_blank" href="${u.label_url}">Label</a>
             <a class="wa-btn s" target="_blank" href="${u.declaration_url}">Declaration</a>
+            <button class="wa-btn s" data-receipt="${u.id}">✉ Receipt</button>
+            ${u.status === 'in_stock' ? `<button class="wa-btn s" data-refurb="${u.id}">🔧 Refurb</button>` : ''}
+            ${u.status === 'in_refurb' ? `<button class="wa-btn s p" data-refurb="${u.id}">🔧 Bench</button>` : ''}
             <button class="wa-btn s a" data-edit="${u.id}">Edit</button>
             ${u.status === 'sold' ? `<button class="wa-btn s" data-op="return" data-id="${u.id}">Return</button>` : ''}
             ${u.status === 'in_stock' && A.manage ? `<button class="wa-btn s danger" data-op="writeoff" data-id="${u.id}">Write off</button>` : ''}
@@ -284,6 +287,19 @@
     q('#un-list').onclick = async (e) => {
       const ed = e.target.closest('[data-edit]');
       if (ed) { editUnit(q('#un-list')._rows.find((u) => u.id == ed.dataset.edit)); return; }
+      const rc = e.target.closest('[data-receipt]');
+      if (rc) {
+        const u = q('#un-list')._rows.find((x) => x.id == rc.dataset.receipt);
+        const to = prompt('Email the purchase receipt to:', (u && u.seller && u.seller.email) || '');
+        if (to === null) return;
+        try {
+          const r = await api(`app/unit/${rc.dataset.receipt}/receipt`, { method: 'POST', body: JSON.stringify({ to }) });
+          toast(`Receipt for ${r.unit} sent to ${r.to}`);
+        } catch (er) { toast(er.message, 1); }
+        return;
+      }
+      const rf = e.target.closest('[data-refurb]');
+      if (rf) { refurbModal(q('#un-list')._rows.find((x) => x.id == rf.dataset.refurb), load); return; }
       const op = e.target.closest('[data-op]');
       if (op) {
         const reason = op.dataset.op === 'writeoff' ? prompt('Reason for write-off?') : '';
@@ -293,6 +309,97 @@
       }
     };
     load();
+  }
+  /**
+   * Refurb bench: buy rough, book parts + labour onto the unit, regrade, reprice.
+   * The all-in figure (purchase + refurb) becomes the unit's COGS when it sells.
+   */
+  async function refurbModal(u, reload) {
+    const d = document.createElement('div');
+    d.className = 'wa-modal';
+    const onBench = u.status === 'in_refurb';
+    const grades = (BOOT.grades || []).filter((g) => g !== 'New');
+    d.innerHTML = `<div class="wa-card"><h2>🔧 ${esc(u.unit_code)} — ${esc(u.model_title)}</h2>
+      <p class="wa-sub">${esc(u.variant_title)} · bought ${money(u.purchase_price)}${onBench ? ' · ON THE BENCH' : ''}</p>
+      <div id="rf-lines">Loading…</div>
+      ${onBench ? `
+      <div class="wa-grid" style="margin-top:8px">
+        <label>Part from stock<select id="rf-part"><option value="">— pick a part —</option>
+          ${(BOOT.parts || []).map((p) => `<option value="${p.id}">${esc(p.name)}${p.compat ? ' · ' + esc(p.compat) : ''} (${p.total_qty} in stock)</option>`).join('')}
+        </select></label>
+        <label>…or describe it<input id="rf-desc" placeholder="e.g. Back glass / Labour"></label>
+        <label>Type<select id="rf-kind"><option value="part">Part</option><option value="labour">Labour</option></select></label>
+        <label>Qty<input id="rf-qty" type="number" value="1" min="1"></label>
+        <label>Cost each £<input id="rf-cost" type="number" step="0.01" placeholder="stock parts use avg cost"></label>
+      </div>
+      <p class="wa-row"><button class="wa-btn s p" id="rf-add">Add cost line</button></p>
+      <hr>
+      <div class="wa-grid">
+        <label>New grade<select id="rf-grade">${grades.map((g) => `<option${g === u.grade ? ' selected' : ''}>${esc(g)}</option>`).join('')}</select></label>
+        <label>Selling price £<input id="rf-sell" type="number" step="0.01" placeholder="blank = keep shelf price"></label>
+      </div>
+      <p class="wa-row">
+        <button class="wa-btn p" id="rf-done">✓ Complete — regrade &amp; back on shelf</button>
+        <button class="wa-btn" id="rf-cancel">Cancel refurb</button>
+        <button class="wa-btn" id="rf-x">Close</button><span id="rf-msg"></span></p>`
+      : `
+      <p class="wa-sub">Starting a refurb takes the phone off the shelf (and off the website) while it's on the bench. Parts and labour you book land on this unit's cost.</p>
+      <p class="wa-row">
+        <button class="wa-btn p" id="rf-start">Start refurb</button>
+        <button class="wa-btn" id="rf-x">Close</button><span id="rf-msg"></span></p>`}
+    </div>`;
+    document.body.appendChild(d);
+    const msg = (t) => { q('#rf-msg', d).textContent = t ? '⚠ ' + t : ''; };
+    const lines = async (c) => {
+      try { c = c || await api(`app/unit/${u.id}/costs`); } catch (er) { q('#rf-lines', d).textContent = er.message; return; }
+      const rows = c.rows || [];
+      q('#rf-lines', d).innerHTML = `<table class="wa-list"><tr><th>Work</th><th>Qty</th><th>Cost</th><th></th></tr>` +
+        (rows.length ? rows.map((r) => `<tr><td>${r.kind === 'labour' ? '🛠 ' : ''}${esc(r.description)}</td><td>${r.qty}</td><td>${money(r.qty * r.unit_cost)}</td>
+          <td>${onBench ? `<button class="wa-btn s danger" data-del="${r.id}">✕</button>` : ''}</td></tr>`).join('')
+        : '<tr><td colspan="4" class="wa-sub">No work booked yet.</td></tr>') +
+        `<tr><td><b>Refurb total</b></td><td></td><td><b>${money(c.refurb_total || 0)}</b></td><td></td></tr>
+         <tr><td><b>All-in cost</b> <small class="wa-sub">(paid + refurb)</small></td><td></td><td><b>${money(c.all_in != null ? c.all_in : (+u.purchase_price + (c.refurb_total || 0)))}</b></td><td></td></tr></table>`;
+      q('#rf-lines', d).onclick = async (e) => {
+        const b = e.target.closest('[data-del]'); if (!b) return;
+        try { const r = await api(`app/unit/${u.id}/refurb`, { method: 'POST', body: JSON.stringify({ op: 'cost-delete', row_id: +b.dataset.del }) }); lines({ ...r.costs, all_in: null }); }
+        catch (er) { msg(er.message); }
+      };
+    };
+    lines();
+    q('#rf-x', d).onclick = () => { d.remove(); reload && reload(); };
+    if (!onBench) {
+      q('#rf-start', d).onclick = async () => {
+        try { await api(`app/unit/${u.id}/refurb`, { method: 'POST', body: JSON.stringify({ op: 'start' }) }); toast(`${u.unit_code} on the bench`); d.remove(); reload && reload(); }
+        catch (er) { msg(er.message); }
+      };
+      return;
+    }
+    q('#rf-add', d).onclick = async () => {
+      msg('');
+      const part_id = +q('#rf-part', d).value || 0;
+      const body = part_id
+        ? { op: 'cost', part_id, qty: q('#rf-qty', d).value }
+        : { op: 'cost', description: q('#rf-desc', d).value, kind: q('#rf-kind', d).value, qty: q('#rf-qty', d).value, unit_cost: q('#rf-cost', d).value };
+      try {
+        const r = await api(`app/unit/${u.id}/refurb`, { method: 'POST', body: JSON.stringify(body) });
+        q('#rf-part', d).value = ''; q('#rf-desc', d).value = ''; q('#rf-cost', d).value = ''; q('#rf-qty', d).value = '1';
+        lines({ ...r.costs, all_in: null });
+      } catch (er) { msg(er.message); }
+    };
+    q('#rf-done', d).onclick = async () => {
+      msg('');
+      try {
+        const r = await api(`app/unit/${u.id}/refurb`, { method: 'POST', body: JSON.stringify({
+          op: 'complete', grade: q('#rf-grade', d).value, sell_price: q('#rf-sell', d).value,
+        }) });
+        toast(`${r.unit.unit_code} → ${r.unit.grade}, back on the shelf`);
+        d.remove(); reload && reload();
+      } catch (er) { msg(er.message); }
+    };
+    q('#rf-cancel', d).onclick = async () => {
+      try { await api(`app/unit/${u.id}/refurb`, { method: 'POST', body: JSON.stringify({ op: 'cancel' }) }); toast('Back on the shelf — no regrade'); d.remove(); reload && reload(); }
+      catch (er) { msg(er.message); }
+    };
   }
   function editUnit(u) {
     const s = u.seller || {};

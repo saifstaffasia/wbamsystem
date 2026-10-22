@@ -56,6 +56,20 @@ class WBAM_Warehouse {
                 $ticket_id = (int) $m[1];
                 $kind = stripos($li_title, 'deposit') !== false ? 'repair_deposit' : 'repair_balance';
             }
+            // Gift card sales are a liability, never product revenue. When the POS
+            // repairs tile sold one as a deposit voucher, the line properties carry
+            // the T-code — link it to the ticket as kind 'gift_voucher'.
+            elseif (!empty($li['gift_card'])) {
+                $kind = 'gift_card';
+                $hay = '';
+                foreach ((array) ($li['properties'] ?? []) as $pp) {
+                    $hay .= ' ' . (string) ($pp['name'] ?? '') . ' ' . (string) ($pp['value'] ?? '');
+                }
+                if (preg_match('/\bT[-\s]?0*(\d{1,6})\b/i', $hay, $vm)) {
+                    $ticket_id = (int) $vm[1];
+                    $kind = 'gift_voucher';
+                }
+            }
             $line_total = (float) ($li['price'] ?? 0) * (int) ($li['quantity'] ?? 1);
             foreach ((array) ($li['discount_allocations'] ?? []) as $da) {
                 $line_total -= (float) ($da['amount'] ?? 0);
@@ -93,6 +107,24 @@ class WBAM_Warehouse {
             $v = (string) ($na['value'] ?? '');
             if (stripos($k, 'trade-in') === 0 && preg_match('/\b(U\d{4,})\b/', $k . ' ' . $v, $tm)) {
                 try { WBAM_Units::link_tradein($tm[1], $order_id, (string) ($o['name'] ?? '')); } catch (Throwable $e) {}
+            }
+            // Voucher-deposit fallback: when line properties couldn't be set, the POS
+            // tile stamps a cart attribute instead. Claim this order's unlinked
+            // gift card lines for that ticket.
+            if (stripos($k, 'repair voucher') === 0 && preg_match('/\bT[-\s]?0*(\d{1,6})\b/i', $k . ' ' . $v, $rm)) {
+                $tid = (int) $rm[1];
+                $orphans = $wpdb->get_results($wpdb->prepare(
+                    "SELECT id, total FROM {$wpdb->prefix}wbam_order_lines
+                     WHERE order_id=%d AND kind='gift_card' AND ticket_id IS NULL", $order_id), ARRAY_A) ?: [];
+                $sum = 0.0;
+                foreach ($orphans as $ol) {
+                    $wpdb->update("{$wpdb->prefix}wbam_order_lines",
+                        ['kind' => 'gift_voucher', 'ticket_id' => $tid], ['id' => (int) $ol['id']]);
+                    $sum += (float) $ol['total'];
+                }
+                if ($sum > 0) {
+                    try { WBAM_Tickets::attach_payment($tid, $order_id, 'gift_voucher', $sum); } catch (Throwable $e) {}
+                }
             }
         }
 

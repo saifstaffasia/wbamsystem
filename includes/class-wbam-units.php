@@ -21,7 +21,7 @@ class WBAM_Units {
             throw new InvalidArgumentException('IMEI must be 14–16 digits.');
         }
         $dupe = $wpdb->get_var($wpdb->prepare(
-            "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved')", $imei
+            "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved','in_refurb')", $imei
         ));
         if ($dupe) throw new RuntimeException("IMEI already in stock as $dupe.");
 
@@ -94,7 +94,7 @@ class WBAM_Units {
         $serial = strtoupper(preg_replace('/\s+/', '', (string) ($in['imei'] ?? '')));
         if (strlen($serial) < 5) throw new InvalidArgumentException('Enter the IMEI or serial number.');
         $dupe = $wpdb->get_var($wpdb->prepare(
-            "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved')", $serial
+            "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved','in_refurb')", $serial
         ));
         if ($dupe) throw new RuntimeException("This IMEI/serial is already in stock as $dupe.");
 
@@ -196,7 +196,7 @@ class WBAM_Units {
             $imei = strtoupper(preg_replace('/\s+/', '', (string) $f['imei']));
             if (strlen($imei) < 5) throw new InvalidArgumentException('IMEI/serial too short.');
             $dupe = $wpdb->get_var($wpdb->prepare(
-                "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved') AND id<>%d",
+                "SELECT unit_code FROM {$wpdb->prefix}wbam_units WHERE imei=%s AND status IN ('in_stock','reserved','in_refurb') AND id<>%d",
                 $imei, $id
             ));
             if ($dupe) throw new RuntimeException("That IMEI/serial is already in stock as $dupe.");
@@ -279,7 +279,7 @@ class WBAM_Units {
         if ($order_line_row) {
             $u = self::get($unit_id);
             $wpdb->update("{$wpdb->prefix}wbam_order_lines",
-                ['unit_id' => $unit_id, 'cogs' => $u['purchase_price']],
+                ['unit_id' => $unit_id, 'cogs' => self::effective_cost($u)],
                 ['id' => $order_line_row]);
         }
         self::event($unit_id, 'sold', "$order_name @ £" . number_format($sale_price, 2));
@@ -396,6 +396,170 @@ class WBAM_Units {
         $wpdb->update("{$wpdb->prefix}wbam_units",
             ['branch_id' => $to_branch_id, 'updated_at' => current_time('mysql')], ['id' => $unit_id]);
         self::event($unit_id, 'transfer', "{$from['name']} → {$to['name']}");
+    }
+
+    /* ---------------- refurbishment ---------------- */
+    /*
+     * Buy low-grade, repair, regrade, sell higher: every part/labour line lands
+     * in wbam_unit_costs, so the unit's TRUE cost = purchase_price + refurb.
+     * Flow: start (off the shelf, -1 Shopify) → cost lines → complete (regrade:
+     * stock moves to the new Condition variant, +1, reprice) or cancel.
+     * purchase_price itself is never touched — the margin-scheme VAT figure
+     * stays clean; refurb spend is management cost only.
+     */
+
+    /** Cost lines + totals for one unit. */
+    public static function costs(int $unit_id): array {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wbam_unit_costs WHERE unit_id=%d ORDER BY id", $unit_id), ARRAY_A) ?: [];
+        $total = 0.0;
+        foreach ($rows as $r) $total += (int) $r['qty'] * (float) $r['unit_cost'];
+        return ['rows' => $rows, 'refurb_total' => round($total, 2)];
+    }
+
+    /** purchase price + everything spent repairing it = what this unit really cost. */
+    public static function effective_cost(array $u): float {
+        global $wpdb;
+        $extra = (float) $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(qty*unit_cost),0) FROM {$wpdb->prefix}wbam_unit_costs WHERE unit_id=%d", (int) $u['id']));
+        return round((float) $u['purchase_price'] + $extra, 2);
+    }
+
+    /** Bench: take the unit off the shelf while it's opened up. */
+    public static function refurb_start(int $unit_id): array {
+        global $wpdb;
+        $u = self::get($unit_id);
+        if (!$u || $u['status'] !== 'in_stock') throw new RuntimeException('Only in-stock units can go on the bench.');
+        $branch = WBAM_Settings::branch((int) $u['branch_id']);
+        WBAM_Catalog::adjust_inventory((int) $u['inventory_item_id'], (int) $branch['shopify_location_id'], -1, 'quality_control');
+        $wpdb->update("{$wpdb->prefix}wbam_units",
+            ['status' => 'in_refurb', 'updated_at' => current_time('mysql')], ['id' => $unit_id]);
+        self::event($unit_id, 'refurb_start', 'on the bench');
+        return self::get($unit_id);
+    }
+
+    /**
+     * Book a cost line: a part from parts stock (decrements the branch's stock at
+     * its average cost) or a free line (ad-hoc part / labour).
+     */
+    public static function refurb_cost(int $unit_id, array $in): array {
+        global $wpdb;
+        $u = self::get($unit_id);
+        if (!$u) throw new RuntimeException('Unknown unit.');
+        if ($u['status'] !== 'in_refurb') throw new RuntimeException('Start the refurb first — costs are booked on the bench.');
+        $qty = max(1, (int) ($in['qty'] ?? 1));
+        $row = ['unit_id' => $unit_id, 'qty' => $qty, 'user_id' => get_current_user_id(), 'created_at' => current_time('mysql')];
+
+        if (!empty($in['part_id'])) {
+            $part_id = (int) $in['part_id'];
+            $s = WBAM_Parts::stock_row($part_id, (int) $u['branch_id']);
+            if ((int) $s['qty'] < $qty) throw new RuntimeException('Not enough of that part in stock at this branch.');
+            $wpdb->update("{$wpdb->prefix}wbam_part_stock", ['qty' => (int) $s['qty'] - $qty], ['id' => $s['id']]);
+            $part = $wpdb->get_row($wpdb->prepare("SELECT * FROM {$wpdb->prefix}wbam_parts WHERE id=%d", $part_id), ARRAY_A);
+            $row += ['kind' => 'part', 'part_id' => $part_id,
+                     'description' => $part['name'] ?? ('Part #' . $part_id), 'unit_cost' => (float) $s['avg_cost']];
+        } else {
+            $desc = sanitize_text_field((string) ($in['description'] ?? ''));
+            $cost = (float) ($in['unit_cost'] ?? 0);
+            if ($desc === '') throw new InvalidArgumentException('Describe the part or work.');
+            if ($cost <= 0) throw new InvalidArgumentException('Enter the cost.');
+            $row += ['kind' => ($in['kind'] ?? '') === 'labour' ? 'labour' : 'part',
+                     'part_id' => null, 'description' => $desc, 'unit_cost' => $cost];
+        }
+        $wpdb->insert("{$wpdb->prefix}wbam_unit_costs", $row);
+        self::event($unit_id, 'refurb_cost', sprintf('%s ×%d @ £%.2f', $row['description'], $qty, $row['unit_cost']));
+        return self::costs($unit_id);
+    }
+
+    /** Remove a cost line (returns a stocked part to the shelf at the booked cost). */
+    public static function refurb_cost_delete(int $unit_id, int $row_id): array {
+        global $wpdb;
+        $r = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}wbam_unit_costs WHERE id=%d AND unit_id=%d", $row_id, $unit_id), ARRAY_A);
+        if (!$r) throw new RuntimeException('Unknown cost line.');
+        if (!empty($r['part_id'])) {
+            $u = self::get($unit_id);
+            $s = WBAM_Parts::stock_row((int) $r['part_id'], (int) $u['branch_id']);
+            $wpdb->update("{$wpdb->prefix}wbam_part_stock", ['qty' => (int) $s['qty'] + (int) $r['qty']], ['id' => $s['id']]);
+        }
+        $wpdb->delete("{$wpdb->prefix}wbam_unit_costs", ['id' => $row_id]);
+        self::event($unit_id, 'refurb_cost', 'removed: ' . $r['description']);
+        return self::costs($unit_id);
+    }
+
+    /**
+     * Done: regrade + reprice + back on the shelf. Stock moves from the old
+     * Condition variant to the new one (works for custom one-off products too —
+     * their only option is Condition). Shopify unit cost refreshes to the
+     * all-in average on both variants.
+     */
+    public static function refurb_complete(int $unit_id, string $grade, ?float $sell_price = null): array {
+        global $wpdb;
+        $u = self::get($unit_id);
+        if (!$u || $u['status'] !== 'in_refurb') throw new RuntimeException('Unit is not on the bench.');
+        $grade = sanitize_text_field($grade);
+        if ($grade === '') throw new InvalidArgumentException('Pick the new grade.');
+        $branch = WBAM_Settings::branch((int) $u['branch_id']);
+
+        // Current variant's option values, with Condition swapped to the new grade.
+        $res = WBAM_Shopify::i()->graphql(
+            'query($id: ID!) { productVariant(id: $id) { selectedOptions { name value } } }',
+            ['id' => WBAM_Shopify::gid('ProductVariant', (int) $u['variant_id'])]
+        );
+        $opts = $res['data']['productVariant']['selectedOptions'] ?? null;
+        if (!$opts) throw new RuntimeException('The unit\'s Shopify variant could not be read.');
+        $sel = [];
+        foreach ($opts as $o) $sel[$o['name']] = $o['value'];
+        if (!isset($sel['Condition'])) throw new RuntimeException('This product has no Condition option.');
+        $old_grade = $sel['Condition'];
+        $sel['Condition'] = $grade;
+
+        // A brand-new variant with no price would list at £0 — demand one.
+        if ($sell_price === null) {
+            $peek = WBAM_Catalog::peek_variant((int) $u['product_id'], $sel);
+            if (!$peek['exists']) throw new InvalidArgumentException('Enter a selling price — this grade has no shelf price yet.');
+        }
+        $variant = WBAM_Catalog::ensure_variant((int) $u['product_id'], $sel, $sell_price);
+        $barcode = WBAM_Catalog::ensure_pool_barcode((int) $u['product_id'], $variant);
+        WBAM_Catalog::adjust_inventory((int) $variant['inventory_item_id'], (int) $branch['shopify_location_id'], +1, 'quality_control');
+
+        $old_variant_id = (int) $u['variant_id'];
+        $old_item_id    = (int) $u['inventory_item_id'];
+        $wpdb->update("{$wpdb->prefix}wbam_units", [
+            'status'            => 'in_stock',
+            'grade'             => $grade,
+            'variant_id'        => $variant['variant_id'],
+            'inventory_item_id' => $variant['inventory_item_id'],
+            'variant_title'     => $variant['title'],
+            'sku'               => $variant['sku'] ?: $u['sku'],
+            'pool_barcode'      => $barcode,
+            'updated_at'        => current_time('mysql'),
+        ], ['id' => $unit_id]);
+
+        $c = self::costs($unit_id);
+        $all_in = round((float) $u['purchase_price'] + $c['refurb_total'], 2);
+        self::event($unit_id, 'refurb_done', sprintf('%s → %s · refurb £%.2f · all-in £%.2f · asking £%.2f',
+            $old_grade, $grade, $c['refurb_total'], $all_in, (float) $variant['price']));
+
+        try { WBAM_Catalog::refresh_variant_cost($variant['variant_id'], $variant['inventory_item_id']); } catch (Throwable $e) {}
+        if ($old_variant_id !== (int) $variant['variant_id']) {
+            try { WBAM_Catalog::refresh_variant_cost($old_variant_id, $old_item_id); } catch (Throwable $e) {}
+        }
+        return self::get($unit_id);
+    }
+
+    /** Abort: back on the shelf unchanged (booked cost lines stay on the unit). */
+    public static function refurb_cancel(int $unit_id): array {
+        global $wpdb;
+        $u = self::get($unit_id);
+        if (!$u || $u['status'] !== 'in_refurb') throw new RuntimeException('Unit is not on the bench.');
+        $branch = WBAM_Settings::branch((int) $u['branch_id']);
+        WBAM_Catalog::adjust_inventory((int) $u['inventory_item_id'], (int) $branch['shopify_location_id'], +1, 'quality_control');
+        $wpdb->update("{$wpdb->prefix}wbam_units",
+            ['status' => 'in_stock', 'updated_at' => current_time('mysql')], ['id' => $unit_id]);
+        self::event($unit_id, 'refurb_cancel', 'back on the shelf, no regrade');
+        return self::get($unit_id);
     }
 
     /* ---------------- stocktake ---------------- */

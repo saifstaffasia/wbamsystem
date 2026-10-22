@@ -126,11 +126,31 @@ class WBAM_Tickets {
         return (string) $draft['invoiceUrl'];
     }
 
-    /** Called by the warehouse when an order line references T-{id}. */
+    /**
+     * Called by the warehouse when an order line references T-{id}.
+     * Kinds: repair_deposit / repair_balance (money against the ticket) and
+     * gift_voucher (a deposit taken as a gift card — a liability the customer
+     * redeems later, online or at the till; it does NOT reduce the balance due).
+     */
     public static function attach_payment(int $ticket_id, int $order_id, string $kind, float $amount): void {
         global $wpdb;
         $t = self::get($ticket_id);
         if (!$t) return;
+        if ($kind === 'gift_voucher') {
+            // A voucher deposit can span several gift card lines (£70 = £50 + £20),
+            // and the webhook can replay — always recompute the sum from the lines.
+            $sum = (float) $wpdb->get_var($wpdb->prepare(
+                "SELECT COALESCE(SUM(total),0) FROM {$wpdb->prefix}wbam_order_lines
+                 WHERE ticket_id=%d AND kind='gift_voucher'", $ticket_id));
+            $first = (int) $t['deposit_order_id'] !== $order_id;
+            $wpdb->update("{$wpdb->prefix}wbam_tickets",
+                ['deposit' => $sum, 'deposit_order_id' => $order_id, 'updated_at' => current_time('mysql')],
+                ['id' => $ticket_id]);
+            if ($first) {
+                self::event($ticket_id, 'payment', 'voucher deposit £' . number_format($sum, 2) . " (order #$order_id)");
+            }
+            return;
+        }
         $field = $kind === 'repair_deposit' ? 'deposit_order_id' : 'balance_order_id';
         if ((int) $t[$field] !== $order_id) {
             $upd = [$field => $order_id, 'updated_at' => current_time('mysql')];
@@ -171,19 +191,26 @@ class WBAM_Tickets {
         return $wpdb->get_results($args ? $wpdb->prepare($sql, $args) : $sql, ARRAY_A) ?: [];
     }
 
-    /** Parts cost + margin summary for one ticket. */
+    /**
+     * Parts cost + margin summary for one ticket. 'paid' is money applied to the
+     * repair itself; 'voucher' is deposit money the customer holds as a gift card
+     * (redeemed as a payment method later, so it must NOT reduce the balance due).
+     */
     public static function economics(int $id): array {
         global $wpdb;
         $t = self::get($id);
         $parts = (float) $wpdb->get_var($wpdb->prepare(
             "SELECT COALESCE(SUM(unit_cost*qty),0) FROM {$wpdb->prefix}wbam_ticket_parts WHERE ticket_id=%d", $id));
         $paid = (float) $wpdb->get_var($wpdb->prepare(
-            "SELECT COALESCE(SUM(total),0) FROM {$wpdb->prefix}wbam_order_lines WHERE ticket_id=%d", $id));
+            "SELECT COALESCE(SUM(total),0) FROM {$wpdb->prefix}wbam_order_lines WHERE ticket_id=%d AND kind<>'gift_voucher'", $id));
+        $voucher = (float) $wpdb->get_var($wpdb->prepare(
+            "SELECT COALESCE(SUM(total),0) FROM {$wpdb->prefix}wbam_order_lines WHERE ticket_id=%d AND kind='gift_voucher'", $id));
         return [
-            'quoted' => (float) ($t['quote'] ?? 0),
-            'paid'   => $paid,
-            'parts'  => $parts,
-            'margin' => $paid - $parts,
+            'quoted'  => (float) ($t['quote'] ?? 0),
+            'paid'    => $paid,
+            'voucher' => $voucher,
+            'parts'   => $parts,
+            'margin'  => $paid - $parts,
         ];
     }
 

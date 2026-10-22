@@ -55,6 +55,56 @@ class WBAM_Notify {
 
     /* ---------------- channels ---------------- */
 
+    /**
+     * Purchase receipt emailed to the seller after a device intake (buy-in or
+     * trade-in — supplier stock has no seller). Takes the unit array from
+     * WBAM_Units::get() (seller_json already decoded into 'seller').
+     * $override_to sends the same receipt to a different address instead
+     * (resend / sample from the Units screen).
+     */
+    public static function intake_receipt(array $u, string $override_to = ''): bool {
+        $seller = is_array($u['seller'] ?? null) ? $u['seller'] : [];
+        $to = trim($override_to) !== '' ? trim($override_to) : trim((string) ($seller['email'] ?? ''));
+        if (!$to || !is_email($to)) return false;
+
+        $s = WBAM_Settings::all();
+        $name    = $s['business_name'];
+        $branch  = WBAM_Settings::branch((int) ($u['branch_id'] ?? 0));
+        $device  = trim((string) $u['model_title'])
+                 . (trim((string) $u['variant_title']) !== '' ? ' — ' . trim((string) $u['variant_title']) : '');
+        $paid    = number_format((float) ($u['purchase_price'] ?? 0), 2);
+        $tradein = ($u['source'] ?? '') === 'tradein';
+        $payout  = [
+            'cash'         => 'Cash',
+            'bank'         => 'Bank transfer',
+            'store_credit' => 'Trade-in value / store credit',
+        ][(string) ($u['payout_method'] ?? '')] ?? ucfirst((string) ($u['payout_method'] ?? ''));
+
+        $first = trim(explode(' ', trim((string) ($seller['name'] ?? ''))) [0] ?? '') ?: 'there';
+        $lines = "Hi $first,\n\n"
+               . "Thanks for " . ($tradein ? 'trading in' : 'selling us') . " your device at $name. "
+               . "This email is your receipt — please keep it for your records.\n\n"
+               . "Receipt:      {$u['unit_code']}\n"
+               . 'Date:         ' . mysql2date('j M Y, H:i', (string) $u['created_at']) . "\n"
+               . "Device:       $device\n"
+               . "IMEI/serial:  {$u['imei']}\n"
+               . (!empty($u['battery_health']) ? "Battery:      {$u['battery_health']}%\n" : '')
+               . ($tradein ? "Allowance:    £$paid (applied against your purchase in store)\n"
+                           : "Price paid:   £$paid\n")
+               . "Paid by:      $payout\n"
+               . ($branch ? "Branch:       {$branch['name']}\n" : '')
+               . "\nBy accepting payment you confirmed that you are the legal owner of the "
+               . "device, that it is free of finance or outstanding claims, and that it may "
+               . "be checked against the national property register.\n\n"
+               . $name
+               . ($s['business_phone'] ? " · {$s['business_phone']}" : '')
+               . (!empty($s['vat_note']) ? "\n" . $s['vat_note'] : '');
+
+        $ok = self::email($to, ($tradein ? 'Trade-in receipt' : 'Purchase receipt') . " — {$u['unit_code']} ($name)", $lines);
+        WBAM_Units::event((int) $u['id'], 'notify_email', ($ok ? 'receipt sent to ' : 'receipt FAILED to ') . $to);
+        return $ok;
+    }
+
     public static function email(string $to, string $subject, string $body, int $ticket_id = 0): bool {
         $s = WBAM_Settings::all();
         $headers = ['From: ' . $s['business_name'] . ' <' . $s['email_from'] . '>'];
