@@ -210,9 +210,9 @@ function Extension() {
             [`Trade-in ${res.unit_code}`]: `${res.title} — IMEI ${res.imei || imei} — allowance £${allowance}`,
           });
         } catch (e) {}
-        shopify.toast.show(`${res.unit_code} saved — receipt emailed. Take £${allowance} on the Trade In payment method`);
+        shopify.toast.show(`${res.unit_code} saved${res.receipt ? ' — receipt emailed' : ''}. Take £${allowance} on the Trade In payment method`);
       } else {
-        shopify.toast.show(`${res.unit_code} added to stock${source === 'supplier' ? '' : ' — receipt emailed'}`);
+        shopify.toast.show(`${res.unit_code} added to stock${res.receipt ? ' — receipt emailed' : ''}`);
       }
       setImei(''); setSearch(''); setModels([]); setProduct(null); setSel({});
       setCustom(false); setCTitle(''); setCGrade('Used (B - Very Good)'); setCSell('');
