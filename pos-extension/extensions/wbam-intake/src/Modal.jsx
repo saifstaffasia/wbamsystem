@@ -16,11 +16,20 @@ export default async () => {
 function Extension() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [view, setView] = useState('form'); // form | list
+  const [view, setView] = useState('form'); // form | list | bench
 
-  // intaken-device list
+  // intaken-device list + bench
   const [lq, setLq] = useState('');
   const [units, setUnits] = useState(null);
+  const [bench, setBench] = useState(null);   // /pos/unit payload
+  const [pTerm, setPTerm] = useState('');     // part search
+  const [parts, setParts] = useState([]);
+  const [wDesc, setWDesc] = useState('');
+  const [wKind, setWKind] = useState('part');
+  const [wQty, setWQty] = useState('1');
+  const [wCost, setWCost] = useState('');
+  const [nGrade, setNGrade] = useState('');
+  const [nPrice, setNPrice] = useState('');
 
   const [imei, setImei] = useState('');
   const [search, setSearch] = useState('');
@@ -114,6 +123,32 @@ function Extension() {
   };
   const openList = () => { setMsg(''); setView('list'); if (units === null) loadUnits(''); };
 
+  // Refurb bench on the till: same engine as the Hub screens.
+  const openBench = async (u) => {
+    setMsg('');
+    try {
+      const info = await call(`unit?id=${u.id}`);
+      setBench(info);
+      setNGrade(info.grade || 'Used (A - Excellent)');
+      setNPrice('');
+      setView('bench');
+    } catch (e) { setMsg(String((e && e.message) || e)); }
+  };
+  const refurb = async (body, toastMsg) => {
+    setBusy(true);
+    setMsg('');
+    try {
+      const r = await call('refurb', { method: 'POST', body: JSON.stringify({ unit_id: bench.id, ...body }) });
+      setBench(r.unit);
+      if (toastMsg) shopify.toast.show(toastMsg);
+      return r.unit;
+    } catch (e) { setMsg(String((e && e.message) || e)); return null; }
+    finally { setBusy(false); }
+  };
+  const searchParts = async (term) => {
+    try { setParts(await call(`parts?term=${encodeURIComponent(term || '')}`)); } catch (e) {}
+  };
+
   // Every option picked → prefill Selling price with the current shelf price.
   const priceSeq = useRef(0);
   useEffect(() => {
@@ -196,19 +231,89 @@ function Extension() {
         <s-box padding="small">
           {msg ? <s-box padding="small"><s-text>{msg}</s-text></s-box> : null}
 
-          <s-box padding="small">
-            <s-button onClick={() => (view === 'list' ? (setMsg(''), setView('form')) : openList())}>
-              {view === 'list' ? '← Back to intake' : '📋 View intaken devices'}
-            </s-button>
-          </s-box>
+          {view !== 'bench' ? (
+            <s-box padding="small">
+              <s-button onClick={() => (view === 'list' ? (setMsg(''), setView('form')) : openList())}>
+                {view === 'list' ? '← Back to intake' : '📋 View intaken devices'}
+              </s-button>
+            </s-box>
+          ) : null}
 
-          {view === 'list' ? (
+          {view === 'bench' && bench ? (
+            <s-box>
+              <s-box padding="small"><s-button onClick={() => { setMsg(''); setView('list'); loadUnits(lq); }}>← Back to device list</s-button></s-box>
+              <s-box padding="small"><s-text>{`🔧 ${bench.unit} · ${bench.device}`}</s-text></s-box>
+              <s-box padding="small"><s-text>{`${bench.status.replace('_', ' ')} · bought £${Number(bench.paid).toFixed(2)} · IMEI …${String(bench.imei).slice(-6)}`}</s-text></s-box>
+              {(bench.costs || []).map((c) => (
+                <s-box padding="small" key={c.row_id}>
+                  <s-text>{`${c.kind === 'labour' ? '🛠 ' : ''}${c.desc} ×${c.qty} — £${(c.qty * c.cost).toFixed(2)}`}</s-text>
+                  {bench.status === 'in_refurb' ? (
+                    <s-button disabled={busy || undefined} onClick={() => refurb({ op: 'cost-delete', row_id: c.row_id })}>Remove</s-button>
+                  ) : null}
+                </s-box>
+              ))}
+              <s-box padding="small"><s-text>{`Refurb total £${Number(bench.refurb_total).toFixed(2)} · ALL-IN £${Number(bench.all_in).toFixed(2)}`}</s-text></s-box>
+
+              {bench.status === 'in_stock' ? (
+                <s-box padding="small">
+                  <s-button disabled={busy || undefined} onClick={() => refurb({ op: 'start' }, `${bench.unit} on the bench — off the shelf`)}>
+                    Start refurb (takes it off the shelf)
+                  </s-button>
+                </s-box>
+              ) : null}
+
+              {bench.status === 'in_refurb' ? (
+                <s-box>
+                  <s-box padding="small"><s-text>Add a part from stock</s-text></s-box>
+                  <s-box padding="small"><s-text-field label="Search parts" value={pTerm} onChange={grab(setPTerm)} onInput={grab(setPTerm)} /></s-box>
+                  <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => searchParts(pTerm)}>Find parts</s-button></s-box>
+                  {parts.map((p) => (
+                    <s-box padding="small" key={p.id}>
+                      <s-button disabled={busy || undefined} onClick={() => refurb({ op: 'cost', part_id: p.id, qty: wQty }, `${p.name} booked`)}>
+                        {`${p.name}${p.compat ? ' · ' + p.compat : ''} (${p.qty} in stock)`}
+                      </s-button>
+                    </s-box>
+                  ))}
+                  <s-box padding="small"><s-text>…or a free line (part bought ad hoc / labour)</s-text></s-box>
+                  <s-box padding="small"><s-text-field label="Description" value={wDesc} onChange={grab(setWDesc)} onInput={grab(setWDesc)} /></s-box>
+                  <s-box padding="small"><s-button onClick={() => setWKind('part')}>{`${wKind === 'part' ? '✓ ' : ''}Part`}</s-button></s-box>
+                  <s-box padding="small"><s-button onClick={() => setWKind('labour')}>{`${wKind === 'labour' ? '✓ ' : ''}Labour`}</s-button></s-box>
+                  <s-box padding="small"><s-text-field label="Qty" value={wQty} onChange={grab(setWQty)} onInput={grab(setWQty)} /></s-box>
+                  <s-box padding="small"><s-text-field label="Cost each £" value={wCost} onChange={grab(setWCost)} onInput={grab(setWCost)} /></s-box>
+                  <s-box padding="small">
+                    <s-button disabled={busy || undefined} onClick={async () => {
+                      const ok = await refurb({ op: 'cost', description: wDesc, kind: wKind, qty: wQty, unit_cost: wCost }, 'Cost line booked');
+                      if (ok) { setWDesc(''); setWCost(''); setWQty('1'); }
+                    }}>Add cost line</s-button>
+                  </s-box>
+
+                  <s-box padding="small"><s-text>{`Finish: new grade${nGrade ? ` — ${nGrade}` : ''}`}</s-text></s-box>
+                  <s-box padding="small"><s-button onClick={() => setNGrade('Used (A - Excellent)')}>{`${nGrade === 'Used (A - Excellent)' ? '✓ ' : ''}Used (A - Excellent)`}</s-button></s-box>
+                  <s-box padding="small"><s-button onClick={() => setNGrade('Used (B - Very Good)')}>{`${nGrade === 'Used (B - Very Good)' ? '✓ ' : ''}Used (B - Very Good)`}</s-button></s-box>
+                  <s-box padding="small"><s-button onClick={() => setNGrade('Used (C - Good)')}>{`${nGrade === 'Used (C - Good)' ? '✓ ' : ''}Used (C - Good)`}</s-button></s-box>
+                  <s-box padding="small"><s-text-field label="Selling price £ (blank = keep shelf price)" value={nPrice} onChange={grab(setNPrice)} onInput={grab(setNPrice)} /></s-box>
+                  <s-box padding="small">
+                    <s-button disabled={busy || undefined} onClick={async () => {
+                      const done = await refurb({ op: 'complete', grade: nGrade, sell_price: nPrice });
+                      if (done) { shopify.toast.show(`${done.unit} → ${done.grade} — back in stock. Reprint the label.`); setView('list'); loadUnits(lq); }
+                    }}>✓ Complete — regrade and restock</s-button>
+                  </s-box>
+                  <s-box padding="small">
+                    <s-button disabled={busy || undefined} onClick={async () => {
+                      const done = await refurb({ op: 'cancel' });
+                      if (done) { shopify.toast.show('Back on the shelf — no regrade'); setView('list'); loadUnits(lq); }
+                    }}>Cancel refurb</s-button>
+                  </s-box>
+                </s-box>
+              ) : null}
+            </s-box>
+          ) : view === 'list' ? (
             <s-box>
               <s-box padding="small"><s-text-field label="Search (IMEI / unit code / model)" value={lq} onChange={grab(setLq)} onInput={grab(setLq)} /></s-box>
               <s-box padding="small"><s-button disabled={busy || undefined} onClick={() => loadUnits(lq)}>{busy ? 'Searching…' : 'Search'}</s-button></s-box>
               {(units || []).map((u) => (
                 <s-box padding="small" key={u.id}>
-                  <s-text>{`${u.unit} · ${u.device}`}</s-text>
+                  <s-button onClick={() => openBench(u)}>{`${u.unit} · ${u.device}`}</s-button>
                   <s-text>{`${u.status.replace('_', ' ')} · paid £${Number(u.paid).toFixed(2)} · …${u.imei4} · ${u.branch} · ${u.when}${u.seller ? ` · ${u.seller}` : ''}`}</s-text>
                 </s-box>
               ))}
